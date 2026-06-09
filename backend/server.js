@@ -106,7 +106,9 @@ const GROUP_RULES = [
 ];
 
 const config = {
+  host: process.env.HOST || "127.0.0.1",
   port: Number(process.env.PORT || 5173),
+  nodeEnv: process.env.NODE_ENV || "development",
   mockMode: String(process.env.MOCK_MODE || "true") !== "false",
   feishu: {
     appId: process.env.FEISHU_APP_ID || "",
@@ -119,6 +121,10 @@ const config = {
     sourceTables: Object.fromEntries(GROUP_RULES.map((rule) => [rule.key, process.env[rule.env] || ""])),
   },
   sessionSecret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex"),
+  cookieSecure:
+    process.env.COOKIE_SECURE == null
+      ? process.env.NODE_ENV === "production"
+      : String(process.env.COOKIE_SECURE || "false") === "true",
   allowTenantTokenFallback: String(process.env.ALLOW_TENANT_TOKEN_FALLBACK || "false") === "true",
   fields: {
     resultId: process.env.RESULT_ID_FIELD || "评分ID",
@@ -158,6 +164,7 @@ const fieldNameCache = new Map();
 const userAccessTokens = new Map();
 const sessions = new Map();
 const oauthStates = new Map();
+const SESSION_COOKIE = "ai_scoring_session";
 
 class AuthRequiredError extends Error {
   constructor(message = "Login required") {
@@ -225,20 +232,42 @@ function signValue(value) {
   return crypto.createHmac("sha256", config.sessionSecret).update(value).digest("base64url");
 }
 
-function sessionCookieValue(sessionId) {
-  return `${sessionId}.${signValue(sessionId)}`;
+function sessionKey() {
+  return crypto.createHash("sha256").update(config.sessionSecret).digest();
 }
 
-function readSessionId(req) {
-  const raw = parseCookies(req).ai_scoring_session || "";
-  const [sessionId, signature] = raw.split(".");
-  if (!sessionId || !signature || signValue(sessionId) !== signature) return "";
-  return sessionId;
+function sealSessionPayload(payload) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", sessionKey(), iv);
+  const plaintext = JSON.stringify(payload);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return [iv, tag, encrypted].map((item) => item.toString("base64url")).join(".");
+}
+
+function openSessionPayload(value) {
+  try {
+    const [ivPart, tagPart, encryptedPart] = String(value || "").split(".");
+    if (!ivPart || !tagPart || !encryptedPart) return null;
+    const decipher = crypto.createDecipheriv("aes-256-gcm", sessionKey(), Buffer.from(ivPart, "base64url"));
+    decipher.setAuthTag(Buffer.from(tagPart, "base64url"));
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(encryptedPart, "base64url")),
+      decipher.final(),
+    ]).toString("utf8");
+    return JSON.parse(plaintext);
+  } catch (error) {
+    return null;
+  }
 }
 
 function getSession(req) {
-  const sessionId = readSessionId(req);
-  if (!sessionId) return null;
+  const raw = parseCookies(req)[SESSION_COOKIE] || "";
+  const session = openSessionPayload(raw);
+  if (session?.user && session.userAccessToken) return session;
+
+  const [sessionId, signature] = raw.split(".");
+  if (!sessionId || !signature || signValue(sessionId) !== signature) return null;
   return sessions.get(sessionId) || null;
 }
 
@@ -256,13 +285,22 @@ function createSession(user, userAccessToken, refreshToken = "") {
 }
 
 function sessionCookie(session) {
+  const value = sealSessionPayload({
+    user: session.user,
+    userAccessToken: session.userAccessToken,
+    refreshToken: session.refreshToken || "",
+    createdAt: session.createdAt,
+  });
   return [
-    `ai_scoring_session=${encodeURIComponent(sessionCookieValue(session.id))}`,
+    `${SESSION_COOKIE}=${encodeURIComponent(value)}`,
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
+    config.cookieSecure ? "Secure" : "",
     "Max-Age=2592000",
-  ].join("; ");
+  ]
+    .filter(Boolean)
+    .join("; ");
 }
 
 function publicUser(user) {
@@ -283,8 +321,9 @@ function requireUser(req) {
 }
 
 function originFor(req) {
-  const proto = req.headers["x-forwarded-proto"] || "http";
-  return `${proto}://${req.headers.host}`;
+  const proto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() || "http";
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+  return `${proto}://${host}`;
 }
 
 function oauthRedirectUri(req) {
@@ -893,6 +932,20 @@ async function writeBackTopicSummary(topic, summary, user) {
 }
 
 async function routeApi(req, res, pathname) {
+  if (req.method === "GET" && pathname === "/api/health") {
+    return json(res, 200, {
+      ok: true,
+      service: "ai-scoring-system",
+      mockMode: config.mockMode,
+      nodeEnv: config.nodeEnv,
+      hasAppId: Boolean(config.feishu.appId),
+      hasRedirectUri: Boolean(config.feishu.redirectUri),
+      hasWikiToken: Boolean(config.feishu.wikiToken),
+      hasAppToken: Boolean(config.feishu.appToken),
+      startedAt: process.uptime(),
+    });
+  }
+
   if (req.method === "GET" && pathname === "/api/config") {
     return json(res, 200, {
       mockMode: config.mockMode,
@@ -1056,7 +1109,13 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(config.port, "127.0.0.1", () => {
-  console.log(`AI Scoring System running at http://127.0.0.1:${config.port}`);
+if (config.nodeEnv === "production" && !process.env.SESSION_SECRET) {
+  console.warn("[config] NODE_ENV=production 时建议设置固定 SESSION_SECRET，否则重启后登录态会失效。");
+}
+
+server.listen(config.port, config.host, () => {
+  console.log(`AI Scoring System running at http://${config.host}:${config.port}`);
   console.log(`MOCK_MODE=${config.mockMode}`);
+  console.log(`NODE_ENV=${config.nodeEnv}`);
+  console.log(`COOKIE_SECURE=${config.cookieSecure}`);
 });

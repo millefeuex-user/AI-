@@ -5,7 +5,9 @@
   "description": "AI课题评审台：飞书网页应用评分系统 MVP",
   "scripts": {
     "start": "node backend/server.js",
-    "dev": "MOCK_MODE=true node backend/server.js"
+    "dev": "MOCK_MODE=true node backend/server.js",
+    "prod": "NODE_ENV=production MOCK_MODE=false node backend/server.js",
+    "check": "node --check backend/server.js && node --check frontend/app.js"
   },
   "engines": {
     "node": ">=18"

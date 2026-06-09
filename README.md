@@ -1,6 +1,6 @@
 # AI课题评审台
 
-这是一个按飞书方案重做的评分系统工程雏形：前端页面、后端 API、飞书免登、多维表格读取封装、评分保存和管理汇总都已拆开。
+这是一个按飞书方案重做的评分系统：前端评分页面、后端 API、飞书 OAuth 登录、多维表格读取、评分保存和管理汇总都已拆开。当前代码支持本地/ngrok 测试，也支持 GitLab + 公司内部服务器部署。
 
 ## 目录结构
 
@@ -8,7 +8,9 @@
 ai-scoring-system/
 ├── frontend/        # Web评分页面
 ├── backend/         # Node.js API服务
-└── database/        # MySQL/PostgreSQL建表脚本
+├── database/        # MySQL/PostgreSQL建表脚本
+├── Dockerfile       # 可选：容器部署
+└── .gitlab-ci.example.yml # 可选：GitLab CI部署模板
 ```
 
 ## 本地运行
@@ -26,7 +28,118 @@ npm run dev
 http://127.0.0.1:5173
 ```
 
-## 正式接飞书
+## GitLab + 公司服务器部署
+
+推荐正式环境使用公司内部服务器，而不是 ngrok。服务器只要能跑 Node.js 18+，并能访问飞书开放平台即可。
+
+### 服务器要求
+
+- Node.js 18+，或 Docker；
+- 可访问 `https://open.feishu.cn` 和 `https://accounts.feishu.cn`；
+- 有稳定 HTTPS 域名，例如 `https://ai-score.example.com`；
+- Nginx/Caddy 反向代理到本服务端口；
+- 环境变量由服务器或 GitLab CI/CD Variables 管理，不写进仓库。
+
+### 生产环境变量
+
+复制 `.env.example` 到服务器环境变量配置中，至少配置：
+
+```bash
+NODE_ENV=production
+HOST=127.0.0.1
+PORT=5173
+MOCK_MODE=false
+SESSION_SECRET=replace_with_a_stable_random_secret
+COOKIE_SECURE=true
+
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=xxx
+FEISHU_REDIRECT_URI=https://ai-score.example.com/auth/callback
+
+FEISHU_WIKI_TOKEN=wikcnxxx
+FEISHU_TABLE_LEADER=tblxxx
+FEISHU_TABLE_TEAM=tblxxx
+FEISHU_TABLE_TD=tblxxx
+FEISHU_TABLE_PX_GP=tblxxx
+FEISHU_TABLE_SG=tblxxx
+FEISHU_TABLE_FI_RA=tblxxx
+FEISHU_TABLE_PD_UX=tblxxx
+FEISHU_TABLE_OC=tblxxx
+FEISHU_TABLE_FC=tblxxx
+FEISHU_TABLE_HR_AD_MUXI=tblxxx
+FEISHU_RESULT_TABLE_ID=tblxxx
+```
+
+`SESSION_SECRET` 必须长期固定，服务重启后用户登录态才稳定。可以这样生成：
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+### Node 常驻部署
+
+```bash
+git clone <your-gitlab-repo-url>
+cd ai-scoring-system
+npm run check
+NODE_ENV=production MOCK_MODE=false HOST=127.0.0.1 PORT=5173 node backend/server.js
+```
+
+建议用 `pm2` 或系统服务托管：
+
+```bash
+pm2 start backend/server.js --name ai-scoring-system
+pm2 save
+```
+
+### Docker 部署
+
+```bash
+docker build -t ai-scoring-system .
+docker run -d --name ai-scoring-system --env-file .env -p 127.0.0.1:5173:5173 ai-scoring-system
+```
+
+### Nginx 反向代理示例
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name ai-score.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:5173;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+部署后可访问：
+
+```text
+https://ai-score.example.com/api/health
+```
+
+返回 `{"ok":true,...}` 即服务正常。
+
+### 飞书后台配置
+
+部署到正式域名后，在飞书开放平台配置一次即可：
+
+```text
+重定向 URL:
+https://ai-score.example.com/auth/callback
+
+H5 可信域名:
+https://ai-score.example.com
+```
+
+后续代码更新、GitLab 部署、服务重启，都不需要重新配置飞书后台。只有域名变化时才需要重新改。
+
+## 飞书接入
 
 1. 在飞书开放平台创建自建应用。
 2. 配置网页应用地址，例如：
@@ -48,6 +161,7 @@ https://your-domain.com
 export MOCK_MODE=false
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
+export FEISHU_REDIRECT_URI=https://your-domain.com/auth/callback
 export FEISHU_WIKI_TOKEN=wikcnxxx
 
 export FEISHU_TABLE_LEADER=tblxxx
@@ -122,8 +236,11 @@ export FEISHU_TABLE_HR_AD_MUXI=tblxxx
 
 | 接口 | 说明 |
 |---|---|
+| `GET /api/health` | 服务健康检查 |
 | `GET /api/config` | 获取前端配置 |
-| `POST /api/auth/login` | 飞书 code 换用户信息 |
+| `GET /api/auth/me` | 获取当前 session 中的真实飞书用户 |
+| `GET /api/auth/feishu/authorize` | 生成飞书 OAuth 授权地址 |
+| `POST /api/auth/feishu/callback` | 飞书 code 换 user_access_token 并写入 session |
 | `GET /api/topics` | 从多个子表获取课题列表 |
 | `GET /api/assignments/me` | 按当前用户身份自动生成待评分课题 |
 | `POST /api/scores` | 提交评分 |
@@ -132,4 +249,4 @@ export FEISHU_TABLE_HR_AD_MUXI=tblxxx
 
 ## 说明
 
-当前后端为了便于本地演示，评分结果保存在 `backend/data/scores.json`。正式环境建议替换为 MySQL 或 PostgreSQL，建表脚本在 `database/` 目录下。
+Mock 模式下评分结果保存在 `backend/data/scores.json`，该文件不建议提交到 Git。正式飞书模式下会优先用 session 中的 `user_access_token` 读取和回写多维表格；如果没有用户授权，默认返回 401，不会自动 fallback 到 `tenant_access_token`。
