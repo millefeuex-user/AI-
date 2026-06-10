@@ -5,7 +5,10 @@ const crypto = require("crypto");
 
 const rootDir = path.resolve(__dirname, "..");
 const frontendDir = path.join(rootDir, "frontend");
-const dataDir = path.join(rootDir, "backend", "data");
+const dataDir =
+  process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME
+    ? path.join("/tmp", "ai-scoring-system")
+    : path.join(rootDir, "backend", "data");
 const scoreFile = path.join(dataDir, "scores.json");
 
 const REVIEW_TYPE = {
@@ -1012,6 +1015,7 @@ async function routeApi(req, res, pathname) {
       hasRedirectUri: Boolean(config.feishu.redirectUri),
       hasWikiToken: Boolean(config.feishu.wikiToken),
       hasAppToken: Boolean(config.feishu.appToken),
+      scoreStore: scoreFile,
       startedAt: process.uptime(),
     });
   }
