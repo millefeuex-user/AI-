@@ -364,30 +364,35 @@ function oauthRedirectUri(req) {
 }
 
 function createOAuthState(req, returnTo = "/") {
-  const state = crypto.randomBytes(24).toString("base64url");
   const record = {
-    state,
+    nonce: crypto.randomBytes(16).toString("base64url"),
     returnTo: returnTo.startsWith("/") ? returnTo : "/",
     redirectUri: oauthRedirectUri(req),
     createdAt: Date.now(),
   };
+  const state = sealSessionPayload(record);
+  record.state = state;
   oauthStates.set(state, record);
   return record;
 }
 
 function takeOAuthState(req, state) {
-  let record = null;
-  const cookieRecord = openSessionPayload(parseCookies(req)[OAUTH_STATE_COOKIE] || "");
-  if (cookieRecord?.state === state) {
-    record = cookieRecord;
-  } else {
-    record = oauthStates.get(state);
+  let record = openSessionPayload(state);
+  if (!record) {
+    const cookieRecord = openSessionPayload(parseCookies(req)[OAUTH_STATE_COOKIE] || "");
+    if (cookieRecord?.state === state) {
+      record = cookieRecord;
+    } else {
+      record = oauthStates.get(state);
+    }
+  }
+  if (record && !record.state) {
+    record.state = state;
   }
   oauthStates.delete(state);
   if (!record?.state || record.state !== state || Date.now() - record.createdAt > 10 * 60 * 1000) return null;
   return record;
 }
-
 function buildFeishuAuthorizeUrl(req, state) {
   const url = new URL("https://accounts.feishu.cn/open-apis/authen/v1/authorize");
   url.searchParams.set("client_id", config.feishu.appId);
