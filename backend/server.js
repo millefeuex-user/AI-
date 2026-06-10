@@ -134,6 +134,15 @@ const GROUP_RULES = [
   },
 ];
 
+const TEAM_TOPIC_FALLBACKS = [
+  { owner: "洛一", department: "RA风险", title: "DOWSURE 智能风控中心" },
+  { owner: "晓戈", department: "TD技术", title: "AI平台数据服务平台" },
+  { owner: "平阳", department: "原Leader组", title: "战略资方管理系统" },
+  { owner: "雨晴", department: "原Leader组", title: "豆服云选品成交工具" },
+  { owner: "千里", department: "原Leader组", title: "AI运营系统" },
+  { owner: "子泓", department: "原Leader组", title: "Fastpay的讲香营销工具" },
+];
+
 const nodeEnv = process.env.NODE_ENV || "development";
 const defaultMockMode = nodeEnv !== "production";
 
@@ -919,6 +928,41 @@ function normalizeMockTopic(item, index) {
   );
 }
 
+function normalizeFallbackTeamTopic(item, index) {
+  const rule = ruleFor("team");
+  return normalizeSourceTopic(
+    {
+      record_id: `fallback_team_${index + 1}`,
+      fields: {
+        负责人: item.owner,
+        "所在部门（多选）": item.department,
+        课题名称: item.title,
+        备注: "来自新版项目评分明细的团队课题兜底清单。",
+      },
+    },
+    { ...rule, tableId: "" },
+    index,
+  );
+}
+
+function missingFallbackTeamTopics(topics) {
+  const missing = [];
+  for (const [index, item] of TEAM_TOPIC_FALLBACKS.entries()) {
+    const exists = topics.some((topic) => topic.groupKey === "team" && personMatches(topic.owner, item.owner));
+    if (!exists) {
+      const topic = normalizeFallbackTeamTopic(item, index);
+      if (topic) missing.push(topic);
+    }
+  }
+  return missing;
+}
+
+function withFallbackTeamTopics(topics) {
+  const nextTopics = [...topics];
+  nextTopics.push(...missingFallbackTeamTopics(nextTopics));
+  return nextTopics;
+}
+
 function requireSourceConfig() {
   if (config.mockMode) return;
   if (!config.feishu.appId || !config.feishu.appSecret) {
@@ -999,7 +1043,7 @@ async function filterWritableFields(tableId, fields, user, appTokenOverride = ""
 
 async function getTopics(user) {
   if (config.mockMode) {
-    return mock.sourceTopics.map(normalizeMockTopic).filter(Boolean);
+    return withFallbackTeamTopics(mock.sourceTopics.map(normalizeMockTopic).filter(Boolean));
   }
   requireSourceConfig();
 
@@ -1018,7 +1062,7 @@ async function getTopics(user) {
   });
 
   const topicGroups = await Promise.all(tasks);
-  return topicGroups.flat();
+  return withFallbackTeamTopics(topicGroups.flat());
 }
 
 async function getTopicDiagnostics(user) {
@@ -1042,12 +1086,23 @@ async function getTopicDiagnostics(user) {
   for (const rule of GROUP_RULES) {
     const tableId = tableIdForRule(rule);
     if (!tableId) {
+      const fallbackTopics = rule.key === "team" ? missingFallbackTeamTopics([]) : [];
       groups.push({
         key: rule.key,
         name: rule.name,
         configured: false,
         rawCount: 0,
-        recognizedCount: 0,
+        recognizedCount: fallbackTopics.length,
+        fallbackAddedCount: fallbackTopics.length,
+        recognizedRecords: fallbackTopics.map((topic) => ({
+          recordId: topic.recordId,
+          source: "fallback",
+          ownerField: topic.leaderField,
+          owner: topic.owner,
+          title: topic.title,
+          department: topic.department,
+          type: topic.type,
+        })),
         skipped: [],
         error: `${rule.env} 未配置`,
       });
@@ -1056,17 +1111,21 @@ async function getTopicDiagnostics(user) {
     try {
       const records = await listBitableRecords(tableId, user);
       const normalized = records.map((record, index) => normalizeSourceTopic(record, { ...rule, tableId }, index));
+      const recognized = normalized.filter(Boolean);
+      const fallbackTopics = rule.key === "team" ? missingFallbackTeamTopics(recognized) : [];
       groups.push({
         key: rule.key,
         name: rule.name,
         tableId,
         configured: true,
         rawCount: records.length,
-        recognizedCount: normalized.filter(Boolean).length,
-        recognizedRecords: normalized
-          .filter(Boolean)
+        recognizedCount: recognized.length + fallbackTopics.length,
+        fallbackAddedCount: fallbackTopics.length,
+        recognizedRecords: recognized
+          .concat(fallbackTopics)
           .map((topic) => ({
             recordId: topic.recordId,
+            source: topic.recordId.startsWith("fallback_team_") ? "fallback" : "feishu",
             ownerField: topic.leaderField,
             owner: topic.owner,
             title: topic.title,
