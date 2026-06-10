@@ -7,6 +7,8 @@
     "start": "node backend/server.js",
     "dev": "MOCK_MODE=true node backend/server.js",
     "prod": "NODE_ENV=production MOCK_MODE=false node backend/server.js",
+    "build": "npm run check",
+    "vercel-build": "npm run check",
     "check": "node --check backend/server.js && node --check frontend/app.js"
   },
   "engines": {

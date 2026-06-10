@@ -1,6 +1,6 @@
 # AI课题评审台
 
-这是一个按飞书方案重做的评分系统：前端评分页面、后端 API、飞书 OAuth 登录、多维表格读取、评分保存和管理汇总都已拆开。当前代码支持本地/ngrok 测试，也支持 GitLab + 公司内部服务器部署。
+这是一个按飞书方案重做的评分系统：前端评分页面、后端 API、飞书 OAuth 登录、多维表格读取、评分保存和管理汇总都已拆开。当前代码支持本地/ngrok 测试，也支持 Vercel 部署。
 
 ## 目录结构
 
@@ -8,7 +8,9 @@
 ai-scoring-system/
 ├── frontend/        # Web评分页面
 ├── backend/         # Node.js API服务
+├── api/             # Vercel Serverless Function入口
 ├── database/        # MySQL/PostgreSQL建表脚本
+├── vercel.json      # Vercel路由配置
 ├── Dockerfile       # 可选：容器部署
 └── .gitlab-ci.example.yml # 可选：GitLab CI部署模板
 ```
@@ -28,9 +30,75 @@ npm run dev
 http://127.0.0.1:5173
 ```
 
+## Vercel 部署
+
+项目已经适配 Vercel：`vercel.json` 会把所有请求转到 `api/index.js`，再由原来的 Node 路由处理前端页面和 `/api/*`。
+
+### 部署步骤
+
+```bash
+cd outputs/ai-scoring-system
+npm run check
+vercel
+```
+
+确认预览环境可用后，部署生产环境：
+
+```bash
+vercel --prod
+```
+
+如果使用 Git 连接 Vercel，也可以直接把 `outputs/ai-scoring-system` 作为项目根目录导入。
+
+### Vercel 环境变量
+
+在 Vercel 项目的 Environment Variables 里配置这些变量：
+
+```bash
+NODE_ENV=production
+MOCK_MODE=false
+SESSION_SECRET=replace_with_a_stable_random_secret
+COOKIE_SECURE=true
+
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=xxx
+FEISHU_REDIRECT_URI=https://your-vercel-domain.vercel.app/auth/callback
+
+FEISHU_WIKI_TOKEN=wikcnxxx
+FEISHU_APP_TOKEN=
+FEISHU_TABLE_LEADER=tblxxx
+FEISHU_TABLE_TEAM=tblxxx
+FEISHU_TABLE_TD=tblxxx
+FEISHU_TABLE_PX_GP=tblxxx
+FEISHU_TABLE_SG=tblxxx
+FEISHU_TABLE_FI_RA=tblxxx
+FEISHU_TABLE_PD_UX=tblxxx
+FEISHU_TABLE_OC=tblxxx
+FEISHU_TABLE_FC=tblxxx
+FEISHU_TABLE_HR_AD_MUXI=tblxxx
+FEISHU_RESULT_TABLE_ID=tblxxx
+ALLOW_TENANT_TOKEN_FALLBACK=false
+```
+
+`SESSION_SECRET` 必须长期固定，否则用户登录态会在重新部署后失效。`HOST` 和 `PORT` 是本地/服务器常驻模式使用的，Vercel 不需要配置。
+
+### 飞书后台配置
+
+Vercel 部署后，在飞书开放平台配置：
+
+```text
+重定向 URL:
+https://your-vercel-domain.vercel.app/auth/callback
+
+H5 可信域名:
+https://your-vercel-domain.vercel.app
+```
+
+如果后续绑定自定义域名，`FEISHU_REDIRECT_URI` 和飞书后台里的重定向 URL 要一起换成自定义域名。
+
 ## GitLab + 公司服务器部署
 
-推荐正式环境使用公司内部服务器，而不是 ngrok。服务器只要能跑 Node.js 18+，并能访问飞书开放平台即可。
+如果不使用 Vercel，也可以部署到公司内部服务器。服务器只要能跑 Node.js 18+，并能访问飞书开放平台即可。
 
 ### 服务器要求
 

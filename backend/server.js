@@ -165,6 +165,7 @@ const userAccessTokens = new Map();
 const sessions = new Map();
 const oauthStates = new Map();
 const SESSION_COOKIE = "ai_scoring_session";
+const OAUTH_STATE_COOKIE = "ai_scoring_oauth_state";
 
 class AuthRequiredError extends Error {
   constructor(message = "Login required") {
@@ -303,6 +304,33 @@ function sessionCookie(session) {
     .join("; ");
 }
 
+function oauthStateCookie(record) {
+  const value = sealSessionPayload(record);
+  return [
+    `${OAUTH_STATE_COOKIE}=${encodeURIComponent(value)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    config.cookieSecure ? "Secure" : "",
+    "Max-Age=600",
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
+function clearCookie(name) {
+  return [
+    `${name}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    config.cookieSecure ? "Secure" : "",
+    "Max-Age=0",
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
 function publicUser(user) {
   const { _sessionUserAccessToken, ...safeUser } = user || {};
   return safeUser;
@@ -332,18 +360,26 @@ function oauthRedirectUri(req) {
 
 function createOAuthState(req, returnTo = "/") {
   const state = crypto.randomBytes(24).toString("base64url");
-  oauthStates.set(state, {
+  const record = {
+    state,
     returnTo: returnTo.startsWith("/") ? returnTo : "/",
     redirectUri: oauthRedirectUri(req),
     createdAt: Date.now(),
-  });
-  return state;
+  };
+  oauthStates.set(state, record);
+  return record;
 }
 
-function takeOAuthState(state) {
-  const record = oauthStates.get(state);
+function takeOAuthState(req, state) {
+  let record = null;
+  const cookieRecord = openSessionPayload(parseCookies(req)[OAUTH_STATE_COOKIE] || "");
+  if (cookieRecord?.state === state) {
+    record = cookieRecord;
+  } else {
+    record = oauthStates.get(state);
+  }
   oauthStates.delete(state);
-  if (!record || Date.now() - record.createdAt > 10 * 60 * 1000) return null;
+  if (!record?.state || record.state !== state || Date.now() - record.createdAt > 10 * 60 * 1000) return null;
   return record;
 }
 
@@ -1000,21 +1036,23 @@ async function routeApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/auth/feishu/authorize") {
     if (!config.feishu.appId) return json(res, 500, { error: "Missing FEISHU_APP_ID" });
     const url = new URL(req.url, `http://${req.headers.host}`);
-    const state = createOAuthState(req, url.searchParams.get("returnTo") || "/");
+    const stateRecord = createOAuthState(req, url.searchParams.get("returnTo") || "/");
     return json(res, 200, {
-      state,
-      authorizationUrl: buildFeishuAuthorizeUrl(req, state),
+      state: stateRecord.state,
+      authorizationUrl: buildFeishuAuthorizeUrl(req, stateRecord.state),
       redirectUri: oauthRedirectUri(req),
-    });
+    }, { "Set-Cookie": oauthStateCookie(stateRecord) });
   }
 
   if (req.method === "POST" && pathname === "/api/auth/feishu/callback") {
     const body = await parseBody(req);
-    const stateRecord = takeOAuthState(String(body.state || ""));
+    const stateRecord = takeOAuthState(req, String(body.state || ""));
     if (!stateRecord) return json(res, 401, { error: "OAuth state 校验失败，请重新登录。" });
     const { user, userAccessToken, refreshToken } = await loginByAuthCode(body.code, stateRecord.redirectUri);
     const session = createSession(user, userAccessToken, refreshToken);
-    return json(res, 200, { user: publicUser(user), returnTo: stateRecord.returnTo }, { "Set-Cookie": sessionCookie(session) });
+    return json(res, 200, { user: publicUser(user), returnTo: stateRecord.returnTo }, {
+      "Set-Cookie": [sessionCookie(session), clearCookie(OAUTH_STATE_COOKIE)],
+    });
   }
 
   if (req.method === "GET" && pathname === "/api/rules") {
@@ -1132,7 +1170,7 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
     if (url.pathname.startsWith("/api/")) return await routeApi(req, res, url.pathname);
@@ -1141,15 +1179,20 @@ const server = http.createServer(async (req, res) => {
     console.error(error);
     return json(res, error.statusCode || 500, { error: error.message });
   }
-});
+}
 
 if (config.nodeEnv === "production" && !process.env.SESSION_SECRET) {
   console.warn("[config] NODE_ENV=production 时建议设置固定 SESSION_SECRET，否则重启后登录态会失效。");
 }
 
-server.listen(config.port, config.host, () => {
-  console.log(`AI Scoring System running at http://${config.host}:${config.port}`);
-  console.log(`MOCK_MODE=${config.mockMode}`);
-  console.log(`NODE_ENV=${config.nodeEnv}`);
-  console.log(`COOKIE_SECURE=${config.cookieSecure}`);
-});
+if (require.main === module) {
+  const server = http.createServer(handleRequest);
+  server.listen(config.port, config.host, () => {
+    console.log(`AI Scoring System running at http://${config.host}:${config.port}`);
+    console.log(`MOCK_MODE=${config.mockMode}`);
+    console.log(`NODE_ENV=${config.nodeEnv}`);
+    console.log(`COOKIE_SECURE=${config.cookieSecure}`);
+  });
+}
+
+module.exports = { handleRequest };
