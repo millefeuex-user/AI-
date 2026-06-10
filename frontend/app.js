@@ -356,6 +356,7 @@ function scoreView(assignmentId) {
             ${link("交付材料", topic.materialUrl)}
             ${link("产品预览", topic.productUrl)}
           </div>
+          ${topic.delivery ? `<div class="field-row" style="margin-top: 18px;"><label>交付物成果</label><div class="detail-value" style="white-space: pre-wrap; line-height: 1.7;">${escapeHtml(topic.delivery)}</div></div>` : ""}
           ${recordFieldsView(topic)}
         </div>
       </aside>
