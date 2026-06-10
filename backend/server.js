@@ -48,6 +48,7 @@ const GROUP_RULES = [
     scoreGroupKey: "team",
     scoreGroupName: "团队课题",
     env: "FEISHU_TABLE_TEAM",
+    tableId: "tblMOSVmTcxFlZMT",
     reviewers: { supervisors: ["林博"] },
     weights: { peer: 0.5, supervisor: 0.5 },
   },
@@ -621,6 +622,55 @@ function pickFieldByHint(fields, hints, excludes = []) {
   return "";
 }
 
+function pickTopicTitle(fields, rule) {
+  const title =
+    pickField(fields, [
+      "课题名称",
+      "课题",
+      "课题标题",
+      "主题",
+      "项目名称",
+      "项目/课题名称",
+      "项目主题",
+      "AI课题名称",
+      "AI课题",
+      "名称",
+    ]) ||
+    pickFieldByHint(fields, ["课题名称", "项目名称", "课题", "项目", "标题", "主题", "名称"], [
+      "负责人",
+      "团队成员",
+      "所在部门",
+      "部门",
+      "链接",
+      "备注",
+      "说明",
+      "交付物",
+    ]);
+
+  if (title || rule.key !== "team") return title;
+
+  for (const [name, value] of Object.entries(fields || {})) {
+    const text = extractText(value);
+    if (!text) continue;
+    const normalizedName = normalizeFieldName(name);
+    if (
+      normalizedName.includes("负责人") ||
+      normalizedName.includes("团队成员") ||
+      normalizedName.includes("所在部门") ||
+      normalizedName === "部门" ||
+      normalizedName.includes("链接") ||
+      normalizedName.includes("备注") ||
+      normalizedName.includes("说明") ||
+      normalizedName.includes("交付物")
+    ) {
+      continue;
+    }
+    return text;
+  }
+
+  return "";
+}
+
 function firstFilledField(fields) {
   for (const [name, value] of Object.entries(fields || {})) {
     if (["负责人意见", "意见", "审批意见", "审核意见"].includes(name)) continue;
@@ -698,6 +748,10 @@ function ruleFor(key) {
   return GROUP_RULES.find((rule) => rule.key === key);
 }
 
+function tableIdForRule(rule) {
+  return rule?.tableId || config.feishu.sourceTables[rule?.key] || "";
+}
+
 function gradeOf(score) {
   if (score >= 90) return "A 优秀";
   if (score >= 80) return "B 良好";
@@ -712,29 +766,7 @@ function normalizeSourceTopic(record, rule, index) {
   const ownerSource = ownerField.value;
   const leader = isTeamLikeTopic ? primaryPersonToken(ownerSource) : "";
   const owner = isTeamLikeTopic ? leader || ownerSource : ownerSource;
-  const title =
-    pickField(fields, [
-      "课题名称",
-      "课题",
-      "课题标题",
-      "主题",
-      "项目名称",
-      "项目/课题名称",
-      "项目主题",
-      "AI课题名称",
-      "AI课题",
-      "名称",
-    ]) ||
-    pickFieldByHint(fields, ["课题名称", "项目名称", "课题", "项目", "标题", "主题", "名称"], [
-      "负责人",
-      "团队成员",
-      "所在部门",
-      "部门",
-      "链接",
-      "备注",
-      "说明",
-      "交付物",
-    ]);
+  const title = pickTopicTitle(fields, rule);
   const department = pickField(fields, ["所在部门", "所在部门（多选）", "部门", "所属部门"]);
   const painPoint = pickField(fields, [
     "当前痛点/现状（描述耗时点 、易错点 、业务瓶颈等）",
@@ -813,29 +845,7 @@ function requireSourceConfig() {
 function sourceTopicRejectReason(record, rule) {
   const fields = record.fields || {};
   const owner = ownerFieldForRule(fields, rule).value;
-  const title =
-    pickField(fields, [
-      "课题名称",
-      "课题",
-      "课题标题",
-      "主题",
-      "项目名称",
-      "项目/课题名称",
-      "项目主题",
-      "AI课题名称",
-      "AI课题",
-      "名称",
-    ]) ||
-    pickFieldByHint(fields, ["课题名称", "项目名称", "课题", "项目", "标题", "主题", "名称"], [
-      "负责人",
-      "团队成员",
-      "所在部门",
-      "部门",
-      "链接",
-      "备注",
-      "说明",
-      "交付物",
-    ]);
+  const title = pickTopicTitle(fields, rule);
   if (!owner && !title) return "缺少负责人/组长字段和课题名称字段";
   if (!owner) return "缺少负责人/组长字段";
   if (!title) return "缺少课题名称字段";
@@ -905,7 +915,7 @@ async function getTopics(user) {
   requireSourceConfig();
 
   const tasks = GROUP_RULES.map(async (rule) => {
-    const tableId = config.feishu.sourceTables[rule.key];
+    const tableId = tableIdForRule(rule);
     if (!tableId) return [];
     try {
       const records = await listBitableRecords(tableId, user);
@@ -941,7 +951,7 @@ async function getTopicDiagnostics(user) {
 
   const groups = [];
   for (const rule of GROUP_RULES) {
-    const tableId = config.feishu.sourceTables[rule.key];
+    const tableId = tableIdForRule(rule);
     if (!tableId) {
       groups.push({
         key: rule.key,
@@ -1255,7 +1265,7 @@ async function routeApi(req, res, pathname) {
       hasResultAppToken: Boolean(config.feishu.resultAppToken),
       sourceMode: config.mockMode ? "mock" : "feishu",
       configuredSourceTables: Object.fromEntries(
-        GROUP_RULES.map((rule) => [rule.key, Boolean(config.feishu.sourceTables[rule.key])]),
+        GROUP_RULES.map((rule) => [rule.key, Boolean(tableIdForRule(rule))]),
       ),
       scoreStore: scoreFile,
       startedAt: process.uptime(),
@@ -1315,7 +1325,7 @@ async function routeApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/debug/fields") {
     const output = {};
     for (const rule of GROUP_RULES) {
-      const tableId = config.feishu.sourceTables[rule.key];
+      const tableId = tableIdForRule(rule);
       if (!tableId) {
         output[rule.key] = { name: rule.name, tableId, fields: [], error: "table_id not configured" };
         continue;
