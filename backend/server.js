@@ -567,6 +567,18 @@ function firstFilledField(fields) {
   return { name: "", value: "" };
 }
 
+function ownerFieldForRule(fields, rule) {
+  const firstField = firstFilledField(fields);
+  const preferredNames =
+    rule.key === "leader" || rule.key === "pxgp" || rule.key === "oc"
+      ? ["花名"]
+      : ["负责人"];
+  const matched = preferredNames
+    .map((name) => ({ name, value: pickField(fields, [name]) }))
+    .find((item) => item.value);
+  return matched || firstField;
+}
+
 function normalizeRecordFields(fields) {
   return Object.entries(fields || {})
     .map(([name, value]) => ({ name, value: extractText(value) }))
@@ -632,26 +644,9 @@ function gradeOf(score) {
 
 function normalizeSourceTopic(record, rule, index) {
   const fields = record.fields || {};
-  const firstField = firstFilledField(fields);
-  const namedOwner = pickField(fields, [
-    "负责人",
-    "项目负责人",
-    "课题负责人",
-    "团队负责人",
-    "组长",
-    "小组长",
-    "Leader",
-    "leader",
-    "Leader/负责人",
-    "花名",
-    "姓名",
-    "提出人",
-    "提交人",
-    "提交人/团队",
-    "成员/负责人",
-  ]);
+  const ownerField = ownerFieldForRule(fields, rule);
   const isTeamLikeTopic = rule.type === "leader" || rule.type === "team";
-  const ownerSource = namedOwner || firstField.value;
+  const ownerSource = ownerField.value;
   const leader = isTeamLikeTopic ? primaryPersonToken(ownerSource) : "";
   const owner = isTeamLikeTopic ? leader || ownerSource : ownerSource;
   const title = pickField(fields, [
@@ -699,7 +694,7 @@ function normalizeSourceTopic(record, rule, index) {
     owner,
     ownerRaw: ownerSource,
     leader,
-    leaderField: firstField.name,
+    leaderField: ownerField.name,
     department,
     level: rule.name,
     materialUrl,
