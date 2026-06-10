@@ -56,6 +56,15 @@ const state = {
   config: null,
   assignments: [],
   summary: [],
+  adminFilters: {
+    department: "",
+    type: "",
+    level: "",
+  },
+  adminSort: {
+    key: "",
+    direction: "desc",
+  },
   selectedAssignmentId: "",
   form: {},
   toast: "",
@@ -427,11 +436,64 @@ function dimension(item, value) {
   `;
 }
 
+function uniqueSummaryValues(field) {
+  return [...new Set(state.summary.map((item) => String(item.topic?.[field] || "").trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, "zh-Hans-CN"),
+  );
+}
+
+function adminFilterSelect(key, field, label) {
+  const value = state.adminFilters[key] || "";
+  const options = uniqueSummaryValues(field);
+  return `
+    <select class="table-filter" data-admin-filter="${key}" aria-label="${escapeHtml(label)}筛选">
+      <option value="">全部</option>
+      ${options.map((option) => `<option value="${escapeHtml(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+    </select>
+  `;
+}
+
+function sortedHeader(key, label) {
+  const active = state.adminSort.key === key;
+  const mark = active ? (state.adminSort.direction === "asc" ? "↑" : "↓") : "↕";
+  return `<button class="sort-button ${active ? "active" : ""}" data-action="sort-summary" data-sort="${key}"><span>${escapeHtml(label)}</span><span>${mark}</span></button>`;
+}
+
+function sortValue(item, key) {
+  if (key === "progress") return item.requiredCount ? item.scoredCount / item.requiredCount : 0;
+  if (key === "average") return item.average == null ? null : Number(item.average);
+  if (key === "recommendationCount") return Number(item.recommendationCount || 0);
+  return 0;
+}
+
+function filteredSummary() {
+  const { department, type, level } = state.adminFilters;
+  const rows = state.summary.filter((item) => {
+    if (department && item.topic.department !== department) return false;
+    if (type && item.topic.type !== type) return false;
+    if (level && item.topic.level !== level) return false;
+    return true;
+  });
+  if (!state.adminSort.key) return rows;
+  const direction = state.adminSort.direction === "asc" ? 1 : -1;
+  return rows.slice().sort((a, b) => {
+    const aValue = sortValue(a, state.adminSort.key);
+    const bValue = sortValue(b, state.adminSort.key);
+    if (aValue == null && bValue == null) return String(a.topic.title || "").localeCompare(String(b.topic.title || ""), "zh-Hans-CN");
+    if (aValue == null) return 1;
+    if (bValue == null) return -1;
+    const diff = aValue - bValue;
+    if (diff !== 0) return diff * direction;
+    return String(a.topic.title || "").localeCompare(String(b.topic.title || ""), "zh-Hans-CN");
+  });
+}
+
 function adminView() {
   const finished = state.summary.filter((item) => item.average != null).length;
   const avg = finished
     ? Math.round((state.summary.filter((item) => item.average != null).reduce((sum, item) => sum + item.average, 0) / finished) * 10) / 10
     : "-";
+  const rows = filteredSummary();
   return `
     <section class="topbar">
       <div><div class="eyebrow">管理端</div><h1>评分结果汇总</h1><p class="copy">这里汇总后端保存的评分结果；正式接入后，课题和评委关系来自飞书多维表格。</p></div>
@@ -444,15 +506,26 @@ function adminView() {
       ${metric("优秀案例推荐", state.summary.reduce((sum, item) => sum + item.recommendationCount, 0))}
     </section>
     <section class="panel">
-      <div class="panel-header"><div class="panel-title">课题汇总</div></div>
+      <div class="panel-header"><div class="panel-title">课题汇总</div><span class="pill">${rows.length}/${state.summary.length}</span></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>课题</th><th>部门</th><th>类型</th><th>申请等级</th><th>进度</th><th>平均分</th><th>结果</th><th>推荐数</th></tr></thead>
+          <thead>
+            <tr>
+              <th>课题</th>
+              <th><div class="filter-head"><span>部门</span>${adminFilterSelect("department", "department", "部门")}</div></th>
+              <th><div class="filter-head"><span>类型</span>${adminFilterSelect("type", "type", "类型")}</div></th>
+              <th><div class="filter-head"><span>申请等级</span>${adminFilterSelect("level", "level", "申请等级")}</div></th>
+              <th>${sortedHeader("progress", "进度")}</th>
+              <th>${sortedHeader("average", "平均分")}</th>
+              <th>结果</th>
+              <th>${sortedHeader("recommendationCount", "推荐数")}</th>
+            </tr>
+          </thead>
           <tbody>
-            ${state.summary.map((item) => {
+            ${rows.length ? rows.map((item) => {
               const grade = item.average == null ? { label: "待评分", className: "amber" } : gradeOf(item.average);
               return `<tr><td><strong>${escapeHtml(item.topic.title)}</strong><br><span class="label">${escapeHtml(item.topic.owner)}</span></td><td>${escapeHtml(item.topic.department)}</td><td>${escapeHtml(item.topic.type)}</td><td>${escapeHtml(item.topic.level)}</td><td>${item.scoredCount}/${item.requiredCount}</td><td>${item.average ?? "-"}</td><td><span class="pill ${grade.className}">${escapeHtml(item.grade)}</span></td><td>${item.recommendationCount}</td></tr>`;
-            }).join("")}
+            }).join("") : `<tr><td colspan="8"><div class="empty">没有符合筛选条件的课题。</div></td></tr>`}
           </tbody>
         </table>
       </div>
@@ -507,6 +580,16 @@ document.addEventListener("click", async (event) => {
     await refreshData();
     showToast("数据已刷新。");
   }
+  if (action === "sort-summary") {
+    const key = target.dataset.sort;
+    if (state.adminSort.key === key) {
+      state.adminSort.direction = state.adminSort.direction === "asc" ? "desc" : "asc";
+    } else {
+      state.adminSort.key = key;
+      state.adminSort.direction = "desc";
+    }
+    render();
+  }
   if (action === "reset") {
     await api("/api/dev/reset", { method: "POST", body: "{}" });
     await refreshData();
@@ -529,6 +612,11 @@ document.addEventListener("input", (event) => {
 
 document.addEventListener("change", (event) => {
   const target = event.target;
+  if (target.dataset.adminFilter) {
+    state.adminFilters[target.dataset.adminFilter] = target.value;
+    render();
+    return;
+  }
   if (target.dataset.field === "recommendCase") {
     state.form.recommendCase = target.value === "true";
     render();
