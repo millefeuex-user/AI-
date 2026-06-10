@@ -108,11 +108,17 @@ const GROUP_RULES = [
   },
 ];
 
+const nodeEnv = process.env.NODE_ENV || "development";
+const defaultMockMode = nodeEnv !== "production";
+
 const config = {
   host: process.env.HOST || "127.0.0.1",
   port: Number(process.env.PORT || 5173),
-  nodeEnv: process.env.NODE_ENV || "development",
-  mockMode: String(process.env.MOCK_MODE || "true") !== "false",
+  nodeEnv,
+  mockMode:
+    process.env.MOCK_MODE == null
+      ? defaultMockMode
+      : String(process.env.MOCK_MODE || "false") !== "false",
   feishu: {
     appId: process.env.FEISHU_APP_ID || "",
     appSecret: process.env.FEISHU_APP_SECRET || "",
@@ -579,7 +585,7 @@ function primaryPersonToken(value) {
   const raw = normalizePersonToken(value);
   if (!raw) return "";
   const [first] = raw
-    .split(/[、,，/／;；\n]+/)
+    .split(/[|｜、,，/／;；\n]+/)
     .map(normalizePersonToken)
     .filter(Boolean);
   return first || raw;
@@ -627,12 +633,39 @@ function gradeOf(score) {
 function normalizeSourceTopic(record, rule, index) {
   const fields = record.fields || {};
   const firstField = firstFilledField(fields);
-  const namedOwner = pickField(fields, ["负责人", "项目负责人", "团队负责人", "花名", "提出人", "提交人", "提交人/团队"]);
+  const namedOwner = pickField(fields, [
+    "负责人",
+    "项目负责人",
+    "课题负责人",
+    "团队负责人",
+    "组长",
+    "小组长",
+    "Leader",
+    "leader",
+    "Leader/负责人",
+    "花名",
+    "姓名",
+    "提出人",
+    "提交人",
+    "提交人/团队",
+    "成员/负责人",
+  ]);
   const isTeamLikeTopic = rule.type === "leader" || rule.type === "team";
   const ownerSource = namedOwner || firstField.value;
   const leader = isTeamLikeTopic ? primaryPersonToken(ownerSource) : "";
   const owner = isTeamLikeTopic ? leader || ownerSource : ownerSource;
-  const title = pickField(fields, ["课题名称", "主题", "项目名称", "AI课题名称"]);
+  const title = pickField(fields, [
+    "课题名称",
+    "课题",
+    "课题标题",
+    "主题",
+    "项目名称",
+    "项目/课题名称",
+    "项目主题",
+    "AI课题名称",
+    "AI课题",
+    "名称",
+  ]);
   const department = pickField(fields, ["所在部门", "所在部门（多选）", "部门", "所属部门"]);
   const painPoint = pickField(fields, [
     "当前痛点/现状（描述耗时点 、易错点 、业务瓶颈等）",
@@ -696,6 +729,52 @@ function normalizeMockTopic(item, index) {
   );
 }
 
+function requireSourceConfig() {
+  if (config.mockMode) return;
+  if (!config.feishu.appToken && !config.feishu.wikiToken) {
+    throw new Error("真实数据模式缺少 FEISHU_APP_TOKEN 或 FEISHU_WIKI_TOKEN，无法读取课题统计表。");
+  }
+}
+
+function sourceTopicRejectReason(record, rule) {
+  const fields = record.fields || {};
+  const firstField = firstFilledField(fields);
+  const namedOwner = pickField(fields, [
+    "负责人",
+    "项目负责人",
+    "课题负责人",
+    "团队负责人",
+    "组长",
+    "小组长",
+    "Leader",
+    "leader",
+    "Leader/负责人",
+    "花名",
+    "姓名",
+    "提出人",
+    "提交人",
+    "提交人/团队",
+    "成员/负责人",
+  ]);
+  const owner = namedOwner || firstField.value;
+  const title = pickField(fields, [
+    "课题名称",
+    "课题",
+    "课题标题",
+    "主题",
+    "项目名称",
+    "项目/课题名称",
+    "项目主题",
+    "AI课题名称",
+    "AI课题",
+    "名称",
+  ]);
+  if (!owner && !title) return "缺少负责人/组长字段和课题名称字段";
+  if (!owner) return "缺少负责人/组长字段";
+  if (!title) return "缺少课题名称字段";
+  return "";
+}
+
 async function listBitableRecords(tableId, user, appTokenOverride = "") {
   const accessToken = await getAccessToken(user);
   const appToken = appTokenOverride || (await getBitableAppToken(user));
@@ -753,9 +832,10 @@ async function filterWritableFields(tableId, fields, user, appTokenOverride = ""
 }
 
 async function getTopics(user) {
-  if (config.mockMode || (!config.feishu.appToken && !config.feishu.wikiToken)) {
+  if (config.mockMode) {
     return mock.sourceTopics.map(normalizeMockTopic).filter(Boolean);
   }
+  requireSourceConfig();
 
   const tasks = GROUP_RULES.map(async (rule) => {
     const tableId = config.feishu.sourceTables[rule.key];
@@ -773,6 +853,76 @@ async function getTopics(user) {
 
   const topicGroups = await Promise.all(tasks);
   return topicGroups.flat();
+}
+
+async function getTopicDiagnostics(user) {
+  if (config.mockMode) {
+    return {
+      mode: "mock",
+      total: mock.sourceTopics.length,
+      groups: GROUP_RULES.map((rule) => ({
+        key: rule.key,
+        name: rule.name,
+        configured: false,
+        rawCount: mock.sourceTopics.filter((topic) => topic.groupKey === rule.key).length,
+        recognizedCount: mock.sourceTopics.map(normalizeMockTopic).filter((topic) => topic?.groupKey === rule.key).length,
+        skipped: [],
+      })),
+    };
+  }
+  requireSourceConfig();
+
+  const groups = [];
+  for (const rule of GROUP_RULES) {
+    const tableId = config.feishu.sourceTables[rule.key];
+    if (!tableId) {
+      groups.push({
+        key: rule.key,
+        name: rule.name,
+        configured: false,
+        rawCount: 0,
+        recognizedCount: 0,
+        skipped: [],
+        error: `${rule.env} 未配置`,
+      });
+      continue;
+    }
+    try {
+      const records = await listBitableRecords(tableId, user);
+      const normalized = records.map((record, index) => normalizeSourceTopic(record, { ...rule, tableId }, index));
+      groups.push({
+        key: rule.key,
+        name: rule.name,
+        tableId,
+        configured: true,
+        rawCount: records.length,
+        recognizedCount: normalized.filter(Boolean).length,
+        skipped: records
+          .map((record, index) => ({
+            recordId: record.record_id || String(index),
+            reason: normalized[index] ? "" : sourceTopicRejectReason(record, rule),
+            fields: Object.keys(record.fields || {}),
+          }))
+          .filter((item) => item.reason),
+      });
+    } catch (error) {
+      groups.push({
+        key: rule.key,
+        name: rule.name,
+        tableId,
+        configured: true,
+        rawCount: 0,
+        recognizedCount: 0,
+        skipped: [],
+        error: error.message,
+      });
+    }
+  }
+  return {
+    mode: "feishu",
+    total: groups.reduce((sum, group) => sum + group.recognizedCount, 0),
+    groups,
+  };
 }
 
 function normalizeScore(record) {
@@ -1050,6 +1200,10 @@ async function routeApi(req, res, pathname) {
       hasWikiToken: Boolean(config.feishu.wikiToken),
       hasAppToken: Boolean(config.feishu.appToken),
       hasResultAppToken: Boolean(config.feishu.resultAppToken),
+      sourceMode: config.mockMode ? "mock" : "feishu",
+      configuredSourceTables: Object.fromEntries(
+        GROUP_RULES.map((rule) => [rule.key, Boolean(config.feishu.sourceTables[rule.key])]),
+      ),
       scoreStore: scoreFile,
       startedAt: process.uptime(),
     });
@@ -1062,6 +1216,7 @@ async function routeApi(req, res, pathname) {
       oauthScopes: config.feishu.oauthScopes,
       hasWikiToken: Boolean(config.feishu.wikiToken),
       ruleMode: "fixed-group-rule",
+      sourceMode: config.mockMode ? "mock" : "feishu",
     });
   }
 
@@ -1121,6 +1276,12 @@ async function routeApi(req, res, pathname) {
       };
     }
     return json(res, 200, output);
+  }
+
+  if (req.method === "GET" && pathname === "/api/debug/topics") {
+    const user = requireUser(req);
+    const diagnostics = await getTopicDiagnostics(user);
+    return json(res, 200, diagnostics);
   }
 
   if (req.method === "GET" && pathname === "/api/assignments/me") {
