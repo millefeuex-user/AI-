@@ -554,6 +554,7 @@ function pickField(fields, names) {
 
 function firstFilledField(fields) {
   for (const [name, value] of Object.entries(fields || {})) {
+    if (["负责人意见", "意见", "审批意见", "审核意见"].includes(name)) continue;
     const text = extractText(value);
     if (text) return { name, value: text };
   }
@@ -628,7 +629,7 @@ function normalizeSourceTopic(record, rule, index) {
   const firstField = firstFilledField(fields);
   const namedOwner = pickField(fields, ["负责人", "项目负责人", "团队负责人", "花名", "提出人", "提交人", "提交人/团队"]);
   const isTeamLikeTopic = rule.type === "leader" || rule.type === "team";
-  const ownerSource = rule.type === "leader" || rule.type === "team" ? firstField.value || namedOwner : namedOwner || firstField.value;
+  const ownerSource = namedOwner || firstField.value;
   const leader = isTeamLikeTopic ? primaryPersonToken(ownerSource) : "";
   const owner = isTeamLikeTopic ? leader || ownerSource : ownerSource;
   const title = pickField(fields, ["课题名称", "主题", "项目名称", "AI课题名称"]);
