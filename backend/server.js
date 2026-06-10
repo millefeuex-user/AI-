@@ -599,6 +599,28 @@ function pickField(fields, names) {
   return "";
 }
 
+function normalizeFieldName(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[()（）【】\[\]<>《》:：/／\\|｜._-]/g, "");
+}
+
+function pickFieldByHint(fields, hints, excludes = []) {
+  const normalizedHints = hints.map(normalizeFieldName).filter(Boolean);
+  const normalizedExcludes = excludes.map(normalizeFieldName).filter(Boolean);
+  for (const [name, value] of Object.entries(fields || {})) {
+    const text = extractText(value);
+    if (!text) continue;
+    const normalizedName = normalizeFieldName(name);
+    if (normalizedExcludes.some((item) => normalizedName.includes(item))) continue;
+    if (normalizedHints.some((item) => normalizedName.includes(item))) {
+      return text;
+    }
+  }
+  return "";
+}
+
 function firstFilledField(fields) {
   for (const [name, value] of Object.entries(fields || {})) {
     if (["负责人意见", "意见", "审批意见", "审核意见"].includes(name)) continue;
@@ -690,18 +712,29 @@ function normalizeSourceTopic(record, rule, index) {
   const ownerSource = ownerField.value;
   const leader = isTeamLikeTopic ? primaryPersonToken(ownerSource) : "";
   const owner = isTeamLikeTopic ? leader || ownerSource : ownerSource;
-  const title = pickField(fields, [
-    "课题名称",
-    "课题",
-    "课题标题",
-    "主题",
-    "项目名称",
-    "项目/课题名称",
-    "项目主题",
-    "AI课题名称",
-    "AI课题",
-    "名称",
-  ]);
+  const title =
+    pickField(fields, [
+      "课题名称",
+      "课题",
+      "课题标题",
+      "主题",
+      "项目名称",
+      "项目/课题名称",
+      "项目主题",
+      "AI课题名称",
+      "AI课题",
+      "名称",
+    ]) ||
+    pickFieldByHint(fields, ["课题名称", "项目名称", "课题", "项目", "标题", "主题", "名称"], [
+      "负责人",
+      "团队成员",
+      "所在部门",
+      "部门",
+      "链接",
+      "备注",
+      "说明",
+      "交付物",
+    ]);
   const department = pickField(fields, ["所在部门", "所在部门（多选）", "部门", "所属部门"]);
   const painPoint = pickField(fields, [
     "当前痛点/现状（描述耗时点 、易错点 、业务瓶颈等）",
@@ -780,18 +813,29 @@ function requireSourceConfig() {
 function sourceTopicRejectReason(record, rule) {
   const fields = record.fields || {};
   const owner = ownerFieldForRule(fields, rule).value;
-  const title = pickField(fields, [
-    "课题名称",
-    "课题",
-    "课题标题",
-    "主题",
-    "项目名称",
-    "项目/课题名称",
-    "项目主题",
-    "AI课题名称",
-    "AI课题",
-    "名称",
-  ]);
+  const title =
+    pickField(fields, [
+      "课题名称",
+      "课题",
+      "课题标题",
+      "主题",
+      "项目名称",
+      "项目/课题名称",
+      "项目主题",
+      "AI课题名称",
+      "AI课题",
+      "名称",
+    ]) ||
+    pickFieldByHint(fields, ["课题名称", "项目名称", "课题", "项目", "标题", "主题", "名称"], [
+      "负责人",
+      "团队成员",
+      "所在部门",
+      "部门",
+      "链接",
+      "备注",
+      "说明",
+      "交付物",
+    ]);
   if (!owner && !title) return "缺少负责人/组长字段和课题名称字段";
   if (!owner) return "缺少负责人/组长字段";
   if (!title) return "缺少课题名称字段";
