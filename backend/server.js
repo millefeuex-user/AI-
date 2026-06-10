@@ -600,6 +600,14 @@ function pickField(fields, names) {
   return "";
 }
 
+function pickNamedField(fields, names) {
+  for (const name of names) {
+    const value = extractText(fields[name]);
+    if (value) return { name, value };
+  }
+  return { name: "", value: "" };
+}
+
 function normalizeFieldName(name) {
   return String(name || "")
     .toLowerCase()
@@ -622,6 +630,21 @@ function pickFieldByHint(fields, hints, excludes = []) {
   return "";
 }
 
+function pickNamedFieldByHint(fields, hints, excludes = []) {
+  const normalizedHints = hints.map(normalizeFieldName).filter(Boolean);
+  const normalizedExcludes = excludes.map(normalizeFieldName).filter(Boolean);
+  for (const [name, value] of Object.entries(fields || {})) {
+    const text = extractText(value);
+    if (!text) continue;
+    const normalizedName = normalizeFieldName(name);
+    if (normalizedExcludes.some((item) => normalizedName.includes(item))) continue;
+    if (normalizedHints.some((item) => normalizedName.includes(item))) {
+      return { name, value: text };
+    }
+  }
+  return { name: "", value: "" };
+}
+
 function pickTopicTitle(fields, rule) {
   const title =
     pickField(fields, [
@@ -637,10 +660,16 @@ function pickTopicTitle(fields, rule) {
       "名称",
     ]) ||
     pickFieldByHint(fields, ["课题名称", "项目名称", "课题", "项目", "标题", "主题", "名称"], [
+      "花名",
       "负责人",
       "团队成员",
       "所在部门",
       "部门",
+      "类型",
+      "课题类型",
+      "项目类型",
+      "分类",
+      "类别",
       "链接",
       "备注",
       "说明",
@@ -655,9 +684,13 @@ function pickTopicTitle(fields, rule) {
     const normalizedName = normalizeFieldName(name);
     if (
       normalizedName.includes("负责人") ||
+      normalizedName.includes("花名") ||
       normalizedName.includes("团队成员") ||
       normalizedName.includes("所在部门") ||
       normalizedName === "部门" ||
+      normalizedName.includes("类型") ||
+      normalizedName.includes("分类") ||
+      normalizedName.includes("类别") ||
       normalizedName.includes("链接") ||
       normalizedName.includes("备注") ||
       normalizedName.includes("说明") ||
@@ -682,14 +715,53 @@ function firstFilledField(fields) {
 
 function ownerFieldForRule(fields, rule) {
   const firstField = firstFilledField(fields);
-  const preferredNames =
-    rule.key === "leader" || rule.key === "pxgp" || rule.key === "oc"
-      ? ["花名"]
-      : ["负责人"];
-  const matched = preferredNames
-    .map((name) => ({ name, value: pickField(fields, [name]) }))
-    .find((item) => item.value);
-  return matched || firstField;
+  const useAliasColumn = rule.key === "leader" || rule.key === "pxgp" || rule.key === "oc";
+  const preferredNames = useAliasColumn
+    ? ["花名", "花名 | 英文名", "花名｜英文名", "花名英文名"]
+    : ["负责人", "项目负责人", "课题负责人"];
+  const exact = pickNamedField(fields, preferredNames);
+  if (exact.value) return exact;
+
+  const hinted = pickNamedFieldByHint(fields, useAliasColumn ? ["花名"] : ["负责人"], [
+    "负责人意见",
+    "审批意见",
+    "审核意见",
+  ]);
+  if (hinted.value) return hinted;
+
+  return firstField;
+}
+
+function pickDepartment(fields) {
+  return (
+    pickField(fields, ["所在部门", "所在部门（多选）", "员工所在部门", "部门", "所属部门"]) ||
+    pickFieldByHint(fields, ["所在部门", "员工所在部门", "部门", "所属部门"], [
+      "负责人",
+      "花名",
+      "课题",
+      "项目",
+      "类型",
+      "链接",
+    ])
+  );
+}
+
+function pickTopicType(fields, rule) {
+  const sourceType =
+    pickField(fields, ["类型", "课题类型", "项目类型", "分类", "类别"]) ||
+    pickFieldByHint(fields, ["课题类型", "项目类型", "类型", "分类", "类别"], [
+      "负责人",
+      "花名",
+      "所在部门",
+      "部门",
+      "课题名称",
+      "项目名称",
+      "链接",
+    ]);
+  if (sourceType) return sourceType;
+  if (rule.type === "team") return "团队课题";
+  if (rule.type === "leader") return "Leader组";
+  return "普通个人组";
 }
 
 function normalizeRecordFields(fields) {
@@ -767,7 +839,8 @@ function normalizeSourceTopic(record, rule, index) {
   const leader = isTeamLikeTopic ? primaryPersonToken(ownerSource) : "";
   const owner = isTeamLikeTopic ? leader || ownerSource : ownerSource;
   const title = pickTopicTitle(fields, rule);
-  const department = pickField(fields, ["所在部门", "所在部门（多选）", "部门", "所属部门"]);
+  const department = pickDepartment(fields);
+  const topicType = pickTopicType(fields, rule);
   const painPoint = pickField(fields, [
     "当前痛点/现状（描述耗时点 、易错点 、业务瓶颈等）",
     "当前痛点/现状",
@@ -798,7 +871,7 @@ function normalizeSourceTopic(record, rule, index) {
     scoreGroupKey: rule.scoreGroupKey,
     scoreGroupName: rule.scoreGroupName,
     title,
-    type: rule.type === "normal" ? "普通个人组" : rule.type === "team" ? "团队课题" : "Leader组",
+    type: topicType,
     owner,
     ownerRaw: ownerSource,
     leader,
@@ -974,6 +1047,16 @@ async function getTopicDiagnostics(user) {
         configured: true,
         rawCount: records.length,
         recognizedCount: normalized.filter(Boolean).length,
+        recognizedRecords: normalized
+          .filter(Boolean)
+          .map((topic) => ({
+            recordId: topic.recordId,
+            ownerField: topic.leaderField,
+            owner: topic.owner,
+            title: topic.title,
+            department: topic.department,
+            type: topic.type,
+          })),
         skipped: records
           .map((record, index) => ({
             recordId: record.record_id || String(index),
