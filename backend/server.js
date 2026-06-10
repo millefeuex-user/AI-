@@ -751,17 +751,22 @@ async function getTopics(user) {
     return mock.sourceTopics.map(normalizeMockTopic).filter(Boolean);
   }
 
-  const topics = [];
-  for (const rule of GROUP_RULES) {
+  const tasks = GROUP_RULES.map(async (rule) => {
     const tableId = config.feishu.sourceTables[rule.key];
-    if (!tableId) continue;
-    const records = await listBitableRecords(tableId, user);
-    records
-      .map((record, index) => normalizeSourceTopic(record, { ...rule, tableId }, index))
-      .filter(Boolean)
-      .forEach((topic) => topics.push(topic));
-  }
-  return topics;
+    if (!tableId) return [];
+    try {
+      const records = await listBitableRecords(tableId, user);
+      return records
+        .map((record, index) => normalizeSourceTopic(record, { ...rule, tableId }, index))
+        .filter(Boolean);
+    } catch (error) {
+      console.error(`[feishu] 读取子表失败，已跳过: ${rule.name} (${tableId}) - ${error.message}`);
+      return [];
+    }
+  });
+
+  const topicGroups = await Promise.all(tasks);
+  return topicGroups.flat();
 }
 
 function normalizeScore(record) {
