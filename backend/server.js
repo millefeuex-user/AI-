@@ -13,97 +13,113 @@ const scoreFile = path.join(dataDir, "scores.json");
 
 const REVIEW_TYPE = {
   PEER: "互评",
-  SUPERVISOR: "负责人评分",
-  COMMITTEE: "班委评分",
+  SUPERVISOR: "领导评分",
 };
 
 const REVIEW_IDENTITY = {
   PEER: "组内成员",
-  SUPERVISOR: "负责人",
-  COMMITTEE: "班委",
+  SUPERVISOR: "领导",
 };
-
-const COMMITTEE_MEMBERS = ["萧何", "罗莹", "白起", "陶白"];
 
 const GROUP_RULES = [
   {
     key: "leader",
     name: "Leader组",
     type: "leader",
+    scoreGroupKey: "leader",
+    scoreGroupName: "Leader组",
     env: "FEISHU_TABLE_LEADER",
-    reviewers: { committee: true, supervisors: [] },
-    weights: { peer: 0.5, committee: 0.5 },
+    reviewers: { supervisors: ["林博", "陶白"] },
+    weights: { peer: 0.5, supervisor: 0.5 },
   },
   {
     key: "team",
     name: "团队课题",
     type: "team",
+    scoreGroupKey: "team",
+    scoreGroupName: "团队课题",
     env: "FEISHU_TABLE_TEAM",
-    reviewers: { committee: true, supervisors: [] },
-    weights: { peer: 0.5, committee: 0.5 },
+    reviewers: { supervisors: ["林博"] },
+    weights: { peer: 0.5, supervisor: 0.5 },
   },
   {
     key: "td",
     name: "TD",
     type: "normal",
+    scoreGroupKey: "td",
+    scoreGroupName: "TD",
     env: "FEISHU_TABLE_TD",
-    reviewers: { committee: false, supervisors: ["知行"] },
+    reviewers: { supervisors: ["知行"] },
     weights: { peer: 0.5, supervisor: 0.5 },
   },
   {
     key: "pxgp",
     name: "PX+GP",
     type: "normal",
+    scoreGroupKey: "fi_px_sg",
+    scoreGroupName: "FI+PX+SG",
     env: "FEISHU_TABLE_PX_GP",
-    reviewers: { committee: false, supervisors: ["林博"] },
+    reviewers: { supervisors: ["Louisa", "白起", "林博"] },
     weights: { peer: 0.5, supervisor: 0.5 },
   },
   {
     key: "sg",
     name: "SG",
     type: "normal",
+    scoreGroupKey: "fi_px_sg",
+    scoreGroupName: "FI+PX+SG",
     env: "FEISHU_TABLE_SG",
-    reviewers: { committee: false, supervisors: ["Louisa", "白起"] },
+    reviewers: { supervisors: ["Louisa", "白起", "林博"] },
     weights: { peer: 0.5, supervisor: 0.5 },
   },
   {
     key: "fira",
     name: "FI+RA",
     type: "normal",
+    scoreGroupKey: "fi_px_sg",
+    scoreGroupName: "FI+PX+SG",
     env: "FEISHU_TABLE_FI_RA",
-    reviewers: { committee: false, supervisors: ["Louisa", "白起"] },
+    reviewers: { supervisors: ["Louisa", "白起", "林博"] },
     weights: { peer: 0.5, supervisor: 0.5 },
   },
   {
     key: "pdux",
     name: "PD+UX",
     type: "normal",
+    scoreGroupKey: "oc_pd_ux",
+    scoreGroupName: "OC+PD+UX",
     env: "FEISHU_TABLE_PD_UX",
-    reviewers: { committee: false, supervisors: ["萧何", "唐举"] },
+    reviewers: { supervisors: ["萧何", "唐举"] },
     weights: { peer: 0.5, supervisor: 0.5 },
   },
   {
     key: "oc",
     name: "OC",
     type: "normal",
+    scoreGroupKey: "oc_pd_ux",
+    scoreGroupName: "OC+PD+UX",
     env: "FEISHU_TABLE_OC",
-    reviewers: { committee: false, supervisors: ["萧何", "唐举"] },
+    reviewers: { supervisors: ["萧何", "唐举"] },
     weights: { peer: 0.5, supervisor: 0.5 },
   },
   {
     key: "fc",
     name: "FC",
     type: "normal",
+    scoreGroupKey: "fc_hr_ad",
+    scoreGroupName: "FC+HR+AD",
     env: "FEISHU_TABLE_FC",
-    reviewers: { committee: false, supervisors: ["洪欣", "郝里", "林博"] },
+    reviewers: { supervisors: ["洪欣", "郝里", "林博"] },
     weights: { peer: 0.5, supervisor: 0.5 },
   },
   {
     key: "hradmuxi",
     name: "HR+AD+木夕",
     type: "normal",
+    scoreGroupKey: "fc_hr_ad",
+    scoreGroupName: "FC+HR+AD",
     env: "FEISHU_TABLE_HR_AD_MUXI",
-    reviewers: { committee: false, supervisors: ["洪欣", "郝里", "林博"] },
+    reviewers: { supervisors: ["洪欣", "郝里", "林博"] },
     weights: { peer: 0.5, supervisor: 0.5 },
   },
 ];
@@ -689,6 +705,8 @@ function normalizeSourceTopic(record, rule, index) {
     groupKey: rule.key,
     groupName: rule.name,
     groupType: rule.type,
+    scoreGroupKey: rule.scoreGroupKey,
+    scoreGroupName: rule.scoreGroupName,
     title,
     type: rule.type === "normal" ? "普通个人组" : rule.type === "team" ? "团队课题" : "Leader组",
     owner,
@@ -696,7 +714,7 @@ function normalizeSourceTopic(record, rule, index) {
     leader,
     leaderField: ownerField.name,
     department,
-    level: rule.name,
+    level: rule.scoreGroupName,
     materialUrl,
     productUrl,
     summary: painPoint || expectedResult || delivery || remark,
@@ -733,25 +751,7 @@ function requireSourceConfig() {
 
 function sourceTopicRejectReason(record, rule) {
   const fields = record.fields || {};
-  const firstField = firstFilledField(fields);
-  const namedOwner = pickField(fields, [
-    "负责人",
-    "项目负责人",
-    "课题负责人",
-    "团队负责人",
-    "组长",
-    "小组长",
-    "Leader",
-    "leader",
-    "Leader/负责人",
-    "花名",
-    "姓名",
-    "提出人",
-    "提交人",
-    "提交人/团队",
-    "成员/负责人",
-  ]);
-  const owner = namedOwner || firstField.value;
+  const owner = ownerFieldForRule(fields, rule).value;
   const title = pickField(fields, [
     "课题名称",
     "课题",
@@ -1021,21 +1021,16 @@ function reviewerKey(user) {
   return user.user_id || user.open_id || user.name || "anonymous";
 }
 
-function isCommittee(user) {
-  return COMMITTEE_MEMBERS.some((name) => personMatches(user.name, name));
-}
-
 function isSupervisorForRule(user, rule) {
   return (rule.reviewers.supervisors || []).some((name) => personMatches(user.name, name));
 }
 
-function groupMembers(topics, groupKey) {
-  return topics.filter((topic) => topic.groupKey === groupKey).map((topic) => topic.leader || topic.owner);
+function groupMembers(topics, scoreGroupKey) {
+  return topics.filter((topic) => topic.scoreGroupKey === scoreGroupKey).map((topic) => topic.leader || topic.owner);
 }
 
 function reviewIdentityFor(reviewType) {
   if (reviewType === REVIEW_TYPE.SUPERVISOR) return REVIEW_IDENTITY.SUPERVISOR;
-  if (reviewType === REVIEW_TYPE.COMMITTEE) return REVIEW_IDENTITY.COMMITTEE;
   return REVIEW_IDENTITY.PEER;
 }
 
@@ -1067,20 +1062,16 @@ function buildAssignmentsForUser(user, topics, scores) {
   for (const topic of topics) {
     const rule = ruleFor(topic.groupKey);
     if (!rule) continue;
-    const members = groupMembers(topics, topic.groupKey);
+    const members = groupMembers(topics, topic.scoreGroupKey);
     const isGroupMember = members.some((member) => personMatches(user.name, member));
     const isOwner = personMatches(user.name, topic.leader || topic.owner);
 
-    if ((rule.type === "leader" || rule.type === "team" || rule.type === "normal") && isGroupMember && !isOwner) {
+    if (isGroupMember && !isOwner) {
       add(topic, REVIEW_TYPE.PEER);
     }
 
-    if (rule.type === "normal" && isSupervisorForRule(user, rule)) {
+    if (isSupervisorForRule(user, rule)) {
       add(topic, REVIEW_TYPE.SUPERVISOR);
-    }
-
-    if ((rule.type === "leader" || rule.type === "team") && isCommittee(user)) {
-      add(topic, REVIEW_TYPE.COMMITTEE);
     }
   }
   return assignments;
@@ -1094,11 +1085,10 @@ function average(scores) {
 
 function requiredCounts(topic, topics) {
   const rule = ruleFor(topic.groupKey);
-  const peerCount = Math.max(groupMembers(topics, topic.groupKey).length - 1, 0);
-  if (!rule) return { peer: 0, supervisor: 0, committee: 0, total: 0 };
-  const supervisorCount = rule.type === "normal" ? (rule.reviewers.supervisors || []).length : 0;
-  const committeeCount = rule.type === "leader" || rule.type === "team" ? COMMITTEE_MEMBERS.length : 0;
-  return { peer: peerCount, supervisor: supervisorCount, committee: committeeCount, total: peerCount + supervisorCount + committeeCount };
+  const peerCount = Math.max(groupMembers(topics, topic.scoreGroupKey).length - 1, 0);
+  if (!rule) return { peer: 0, supervisor: 0, total: 0 };
+  const supervisorCount = (rule.reviewers.supervisors || []).length;
+  return { peer: peerCount, supervisor: supervisorCount, total: peerCount + supervisorCount };
 }
 
 function summarizeTopic(topic, topics, scores) {
@@ -1106,13 +1096,9 @@ function summarizeTopic(topic, topics, scores) {
   const topicScores = scores.filter((score) => score.topicId === topic.id);
   const peerAverage = average(topicScores.filter((score) => score.reviewType === REVIEW_TYPE.PEER));
   const supervisorAverage = average(topicScores.filter((score) => score.reviewType === REVIEW_TYPE.SUPERVISOR));
-  const committeeAverage = average(topicScores.filter((score) => score.reviewType === REVIEW_TYPE.COMMITTEE));
   let finalScore = null;
-  if (rule?.type === "normal" && peerAverage != null && supervisorAverage != null) {
+  if (peerAverage != null && supervisorAverage != null) {
     finalScore = Math.round((peerAverage * rule.weights.peer + supervisorAverage * rule.weights.supervisor) * 10) / 10;
-  }
-  if ((rule?.type === "leader" || rule?.type === "team") && peerAverage != null && committeeAverage != null) {
-    finalScore = Math.round((peerAverage * rule.weights.peer + committeeAverage * rule.weights.committee) * 10) / 10;
   }
   const counts = requiredCounts(topic, topics);
   return {
@@ -1121,7 +1107,6 @@ function summarizeTopic(topic, topics, scores) {
     scoredCount: topicScores.length,
     peerAverage,
     supervisorAverage,
-    committeeAverage,
     average: finalScore,
     grade: finalScore == null ? "评分中" : gradeOf(finalScore),
     recommendationCount: topicScores.filter((score) => score.recommendCase).length,
@@ -1161,11 +1146,10 @@ function formatScoreDetails(scores) {
 }
 
 function topicWritebackFields(summary) {
-  const secondAverage = summary.topic.groupType === "normal" ? summary.supervisorAverage : summary.committeeAverage;
+  const secondAverage = summary.supervisorAverage;
   const fields = {
     [config.fields.writebackPeerAverage]: summary.peerAverage,
     [config.fields.writebackSupervisorAverage]: summary.supervisorAverage,
-    [config.fields.writebackCommitteeAverage]: summary.committeeAverage,
     [config.fields.writebackSecondAverage]: secondAverage,
     [config.fields.writebackFinalScore]: summary.average,
     [config.fields.writebackFinalGrade]: summary.grade,
@@ -1245,7 +1229,7 @@ async function routeApi(req, res, pathname) {
   }
 
   if (req.method === "GET" && pathname === "/api/rules") {
-    return json(res, 200, { committeeMembers: COMMITTEE_MEMBERS, groupRules: GROUP_RULES });
+    return json(res, 200, { groupRules: GROUP_RULES });
   }
 
   if (req.method === "GET" && pathname === "/api/topics") {
