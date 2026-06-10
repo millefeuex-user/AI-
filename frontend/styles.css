@@ -262,9 +262,8 @@ h1 {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
-  margin: -56px 24px 22px;
+  margin: 0 0 22px;
   position: relative;
-  z-index: 2;
 }
 
 .metric {
@@ -326,7 +325,11 @@ h1 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 372px;
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
+}
+
+.content-grid > .panel {
+  height: 100%;
 }
 
 .topic-list {
@@ -805,7 +808,7 @@ th {
   }
 
   .metrics {
-    margin: -40px 14px 18px;
+    margin: 0 0 18px;
   }
 }
 
@@ -829,7 +832,7 @@ th {
   }
 
   .metrics {
-    margin: -52px 10px 18px;
+    margin: 0 0 18px;
   }
 
   .topic-head,

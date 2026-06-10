@@ -120,6 +120,7 @@ const config = {
     oauthScopes: process.env.FEISHU_OAUTH_SCOPES || "",
     appToken: process.env.FEISHU_APP_TOKEN || "",
     wikiToken: process.env.FEISHU_WIKI_TOKEN || "",
+    resultAppToken: process.env.FEISHU_RESULT_APP_TOKEN || "",
     resultTableId: process.env.FEISHU_RESULT_TABLE_ID || "",
     sourceTables: Object.fromEntries(GROUP_RULES.map((rule) => [rule.key, process.env[rule.env] || ""])),
   },
@@ -134,7 +135,8 @@ const config = {
     resultAssignmentId: process.env.RESULT_ASSIGNMENT_ID_FIELD || "关系ID",
     resultTopicId: process.env.RESULT_TOPIC_ID_FIELD || "课题ID",
     resultReviewerId: process.env.RESULT_REVIEWER_ID_FIELD || "评委UserID",
-    resultReviewerName: process.env.RESULT_REVIEWER_NAME_FIELD || "评委姓名",
+    resultReviewerName: process.env.RESULT_REVIEWER_NAME_FIELD || "花名 | 英文名",
+    resultProjectScore: process.env.RESULT_PROJECT_SCORE_FIELD || "项目评分",
     resultReviewerIdentity: process.env.RESULT_REVIEWER_IDENTITY_FIELD || "评分人身份",
     resultTopicGroup: process.env.RESULT_TOPIC_GROUP_FIELD || "被评项目所在组",
     resultReviewType: process.env.RESULT_REVIEW_TYPE_FIELD || "评分类型",
@@ -144,7 +146,7 @@ const config = {
     resultReuseAsset: process.env.RESULT_REUSE_ASSET_FIELD || "可复用沉淀",
     resultTotal: process.env.RESULT_TOTAL_FIELD || "总分",
     resultGrade: process.env.RESULT_GRADE_FIELD || "等级",
-    resultComment: process.env.RESULT_COMMENT_FIELD || "综合评语",
+    resultComment: process.env.RESULT_COMMENT_FIELD || "备注",
     resultHighlights: process.env.RESULT_HIGHLIGHTS_FIELD || "主要亮点",
     resultSuggestions: process.env.RESULT_SUGGESTIONS_FIELD || "改进建议",
     resultRecommendCase: process.env.RESULT_RECOMMEND_CASE_FIELD || "是否推荐优秀案例",
@@ -688,9 +690,9 @@ function normalizeMockTopic(item, index) {
   );
 }
 
-async function listBitableRecords(tableId, user) {
+async function listBitableRecords(tableId, user, appTokenOverride = "") {
   const accessToken = await getAccessToken(user);
-  const appToken = await getBitableAppToken(user);
+  const appToken = appTokenOverride || (await getBitableAppToken(user));
   const items = [];
   let pageToken = "";
   do {
@@ -703,10 +705,10 @@ async function listBitableRecords(tableId, user) {
   return items;
 }
 
-async function writeBitableRecord(tableId, recordId, fields, user) {
+async function writeBitableRecord(tableId, recordId, fields, user, appTokenOverride = "") {
   const accessToken = await getAccessToken(user);
-  const appToken = await getBitableAppToken(user);
-  const filteredFields = await filterWritableFields(tableId, fields, user);
+  const appToken = appTokenOverride || (await getBitableAppToken(user));
+  const filteredFields = await filterWritableFields(tableId, fields, user, appTokenOverride);
   if (!Object.keys(filteredFields).length) return null;
   const url = recordId
     ? `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}`
@@ -722,24 +724,25 @@ async function writeBitableRecord(tableId, recordId, fields, user) {
   return data.data?.record || data.data;
 }
 
-async function listBitableFields(tableId, user) {
+async function listBitableFields(tableId, user, appTokenOverride = "") {
   const accessToken = await getAccessToken(user);
-  const appToken = await getBitableAppToken(user);
+  const appToken = appTokenOverride || (await getBitableAppToken(user));
   const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/fields?page_size=200`;
   const data = await feishuFetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   return data.data?.items || [];
 }
 
-async function getFieldNames(tableId, user) {
-  if (fieldNameCache.has(tableId)) return fieldNameCache.get(tableId);
-  const fields = await listBitableFields(tableId, user);
+async function getFieldNames(tableId, user, appTokenOverride = "") {
+  const cacheKey = `${appTokenOverride || "default"}:${tableId}`;
+  if (fieldNameCache.has(cacheKey)) return fieldNameCache.get(cacheKey);
+  const fields = await listBitableFields(tableId, user, appTokenOverride);
   const names = new Set(fields.map((field) => field.field_name).filter(Boolean));
-  fieldNameCache.set(tableId, names);
+  fieldNameCache.set(cacheKey, names);
   return names;
 }
 
-async function filterWritableFields(tableId, fields, user) {
-  const fieldNames = await getFieldNames(tableId, user);
+async function filterWritableFields(tableId, fields, user, appTokenOverride = "") {
+  const fieldNames = await getFieldNames(tableId, user, appTokenOverride);
   return Object.fromEntries(Object.entries(fields).filter(([name]) => fieldNames.has(name)));
 }
 
@@ -763,6 +766,7 @@ async function getTopics(user) {
 
 function normalizeScore(record) {
   const fields = record.fields || {};
+  const projectScore = Number(extractText(fields[config.fields.resultProjectScore]) || 0);
   return {
     id: extractText(fields[config.fields.resultId]) || record.record_id,
     recordId: record.record_id,
@@ -777,7 +781,7 @@ function normalizeScore(record) {
     usageDepth: Number(extractText(fields[config.fields.resultUsageDepth]) || 0),
     deliveryQuality: Number(extractText(fields[config.fields.resultDeliveryQuality]) || 0),
     reuseAsset: Number(extractText(fields[config.fields.resultReuseAsset]) || 0),
-    total: Number(extractText(fields[config.fields.resultTotal]) || 0),
+    total: Number(extractText(fields[config.fields.resultTotal]) || projectScore || 0),
     grade: extractText(fields[config.fields.resultGrade]),
     comment: extractText(fields[config.fields.resultComment]),
     highlights: extractText(fields[config.fields.resultHighlights]),
@@ -788,37 +792,50 @@ function normalizeScore(record) {
 }
 
 async function getScores(user) {
-  if (config.mockMode || !config.feishu.resultTableId || (!config.feishu.appToken && !config.feishu.wikiToken)) return readScores();
-  const records = await listBitableRecords(config.feishu.resultTableId, user);
+  if (
+    config.mockMode ||
+    !config.feishu.resultTableId ||
+    (!config.feishu.appToken && !config.feishu.wikiToken && !config.feishu.resultAppToken)
+  ) {
+    return readScores();
+  }
+  const records = await listBitableRecords(config.feishu.resultTableId, user, config.feishu.resultAppToken);
   return records.map(normalizeScore);
+}
+
+function scoreRemark(score) {
+  return [
+    `课题：${score.topicTitle || score.topicId || "-"}`,
+    `评分类型：${score.reviewType || "-"}`,
+    `问题价值：${score.problemValue}`,
+    `使用深度：${score.usageDepth}`,
+    `交付质量：${score.deliveryQuality}`,
+    `可复用沉淀：${score.reuseAsset}`,
+    score.comment ? `综合评语：${score.comment}` : "",
+    score.highlights ? `主要亮点：${score.highlights}` : "",
+    score.suggestions ? `改进建议：${score.suggestions}` : "",
+    score.recommendCase ? "推荐优秀案例：是" : "推荐优秀案例：否",
+    `提交时间：${score.submittedAt}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function scoreToBitableFields(score) {
   return {
-    [config.fields.resultId]: score.id,
-    [config.fields.resultAssignmentId]: score.assignmentId,
-    [config.fields.resultTopicId]: score.topicId,
-    [config.fields.resultReviewerId]: score.reviewerId,
     [config.fields.resultReviewerName]: score.reviewerName,
-    [config.fields.resultReviewerIdentity]: score.reviewerIdentity,
-    [config.fields.resultTopicGroup]: score.topicGroup,
-    [config.fields.resultReviewType]: score.reviewType,
-    [config.fields.resultProblemValue]: score.problemValue,
-    [config.fields.resultUsageDepth]: score.usageDepth,
-    [config.fields.resultDeliveryQuality]: score.deliveryQuality,
-    [config.fields.resultReuseAsset]: score.reuseAsset,
-    [config.fields.resultTotal]: score.total,
+    [config.fields.resultProjectScore]: score.total,
     [config.fields.resultGrade]: score.grade,
-    [config.fields.resultComment]: score.comment,
-    [config.fields.resultHighlights]: score.highlights,
-    [config.fields.resultSuggestions]: score.suggestions,
-    [config.fields.resultRecommendCase]: score.recommendCase ? "是" : "否",
-    [config.fields.resultSubmittedAt]: score.submittedAt,
+    [config.fields.resultComment]: scoreRemark(score),
   };
 }
 
 async function saveScore(score, user) {
-  if (config.mockMode || !config.feishu.resultTableId || (!config.feishu.appToken && !config.feishu.wikiToken)) {
+  if (
+    config.mockMode ||
+    !config.feishu.resultTableId ||
+    (!config.feishu.appToken && !config.feishu.wikiToken && !config.feishu.resultAppToken)
+  ) {
     const scores = readScores();
     const index = scores.findIndex((item) => item.assignmentId === score.assignmentId && item.reviewerId === score.reviewerId);
     if (index >= 0) scores[index] = score;
@@ -828,9 +845,15 @@ async function saveScore(score, user) {
   }
 
   const existingScores = await getScores(user);
-  const existing = existingScores.find((item) => item.assignmentId === score.assignmentId && item.reviewerId === score.reviewerId);
+  const existing = existingScores.find((item) => personMatches(item.reviewerName, score.reviewerName));
   const nextScore = { ...score, id: existing?.id || score.id, recordId: existing?.recordId };
-  await writeBitableRecord(config.feishu.resultTableId, nextScore.recordId, scoreToBitableFields(nextScore), user);
+  await writeBitableRecord(
+    config.feishu.resultTableId,
+    nextScore.recordId,
+    scoreToBitableFields(nextScore),
+    user,
+    config.feishu.resultAppToken,
+  );
   return nextScore;
 }
 
@@ -1015,6 +1038,7 @@ async function routeApi(req, res, pathname) {
       hasRedirectUri: Boolean(config.feishu.redirectUri),
       hasWikiToken: Boolean(config.feishu.wikiToken),
       hasAppToken: Boolean(config.feishu.appToken),
+      hasResultAppToken: Boolean(config.feishu.resultAppToken),
       scoreStore: scoreFile,
       startedAt: process.uptime(),
     });
@@ -1107,6 +1131,7 @@ async function routeApi(req, res, pathname) {
       recordId: existing?.recordId,
       assignmentId: body.assignmentId,
       topicId: body.topicId,
+      topicTitle: topic?.title || "",
       reviewerId: reviewerKey(user),
       reviewerName: user.name,
       reviewerIdentity: body.reviewerIdentity || reviewIdentityFor(body.reviewType),
