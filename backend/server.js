@@ -652,6 +652,7 @@ function pickTopicTitle(fields, rule) {
       "课题",
       "课题标题",
       "主题",
+      "项目",
       "项目名称",
       "项目/课题名称",
       "项目主题",
@@ -716,17 +717,17 @@ function firstFilledField(fields) {
 function ownerFieldForRule(fields, rule) {
   const firstField = firstFilledField(fields);
   const useAliasColumn = rule.key === "leader" || rule.key === "pxgp" || rule.key === "oc";
-  const preferredNames = useAliasColumn
-    ? ["花名", "花名 | 英文名", "花名｜英文名", "花名英文名"]
-    : ["负责人", "项目负责人", "课题负责人"];
+  const preferredNames =
+    rule.key === "team"
+      ? ["负责人", "项目负责人", "课题负责人", "团队负责人", "提交人/团队", "提交人", "团队", "团队成员", "组长"]
+      : useAliasColumn
+        ? ["花名", "花名 | 英文名", "花名｜英文名", "花名英文名"]
+        : ["负责人", "项目负责人", "课题负责人"];
   const exact = pickNamedField(fields, preferredNames);
   if (exact.value) return exact;
 
-  const hinted = pickNamedFieldByHint(fields, useAliasColumn ? ["花名"] : ["负责人"], [
-    "负责人意见",
-    "审批意见",
-    "审核意见",
-  ]);
+  const ownerHints = rule.key === "team" ? ["负责人", "提交人", "团队成员", "团队", "组长"] : useAliasColumn ? ["花名"] : ["负责人"];
+  const hinted = pickNamedFieldByHint(fields, ownerHints, ["负责人意见", "审批意见", "审核意见"]);
   if (hinted.value) return hinted;
 
   return firstField;
@@ -757,6 +758,8 @@ function pickTopicType(fields, rule) {
       "课题名称",
       "项目名称",
       "链接",
+      "等级",
+      "申请等级",
     ]);
   if (sourceType) return sourceType;
   if (rule.type === "team") return "团队课题";
@@ -821,7 +824,7 @@ function ruleFor(key) {
 }
 
 function tableIdForRule(rule) {
-  return rule?.tableId || config.feishu.sourceTables[rule?.key] || "";
+  return config.feishu.sourceTables[rule?.key] || rule?.tableId || "";
 }
 
 function gradeOf(score) {
@@ -835,10 +838,19 @@ function normalizeSourceTopic(record, rule, index) {
   const fields = record.fields || {};
   const ownerField = ownerFieldForRule(fields, rule);
   const isTeamLikeTopic = rule.type === "leader" || rule.type === "team";
-  const ownerSource = ownerField.value;
+  const title = pickTopicTitle(fields, rule);
+  const ownerFieldName = normalizeFieldName(ownerField.name);
+  const ownerLooksLikeTitle =
+    rule.key === "team" &&
+    title &&
+    ownerField.value === title &&
+    (ownerFieldName.includes("项目") ||
+      ownerFieldName.includes("课题") ||
+      ownerFieldName.includes("主题") ||
+      ownerFieldName.includes("名称"));
+  const ownerSource = ownerLooksLikeTitle ? "" : ownerField.value;
   const leader = isTeamLikeTopic ? primaryPersonToken(ownerSource) : "";
   const owner = isTeamLikeTopic ? leader || ownerSource : ownerSource;
-  const title = pickTopicTitle(fields, rule);
   const department = pickDepartment(fields);
   const topicType = pickTopicType(fields, rule);
   const painPoint = pickField(fields, [
@@ -859,7 +871,9 @@ function normalizeSourceTopic(record, rule, index) {
   const productUrl = pickField(fields, ["产品预览链接", "产品链接", "Demo链接", "演示链接"]) || materialUrl;
   const remark = pickField(fields, ["备注", "说明"]);
   const detailFields = normalizeRecordFields(fields);
-  if (!owner || !title) return null;
+  if (!title) return null;
+  if (!owner && rule.key !== "team") return null;
+  const displayOwner = owner || "团队课题";
   return {
     id: `${rule.key}:${record.record_id || index}`,
     rawId: record.record_id || String(index),
@@ -872,7 +886,7 @@ function normalizeSourceTopic(record, rule, index) {
     scoreGroupName: rule.scoreGroupName,
     title,
     type: topicType,
-    owner,
+    owner: displayOwner,
     ownerRaw: ownerSource,
     leader,
     leaderField: ownerField.name,
@@ -919,8 +933,10 @@ function sourceTopicRejectReason(record, rule) {
   const fields = record.fields || {};
   const owner = ownerFieldForRule(fields, rule).value;
   const title = pickTopicTitle(fields, rule);
-  if (!owner && !title) return "缺少负责人/组长字段和课题名称字段";
-  if (!owner) return "缺少负责人/组长字段";
+  if (!owner && !title) {
+    return rule.key === "team" ? "缺少课题名称字段" : "缺少负责人/组长字段和课题名称字段";
+  }
+  if (!owner && rule.key !== "team") return "缺少负责人/组长字段";
   if (!title) return "缺少课题名称字段";
   return "";
 }
