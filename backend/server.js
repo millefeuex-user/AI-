@@ -21,6 +21,15 @@ const REVIEW_IDENTITY = {
   SUPERVISOR: "领导",
 };
 
+const SCORE_GROUP_MEMBERS = {
+  leader: ["郝里", "刘悦", "林博", "知行", "唐举", "楚川", "沈浪", "佩奇", "笑颜", "魏莱", "洪欣", "财神"],
+  team: ["洛一", "晓戈", "平阳", "雨晴", "千里", "子泓"],
+  td: ["沐风", "文澜", "青木", "云嵩", "星野", "翊鸿", "砚海", "冬阳", "蔚然", "唐瑞", "清风", "鲁旺", "叶成", "小满", "星遥", "浩克", "辰风", "波西", "晓戈", "丰仁", "时莱", "昭洋", "陆川", "王诚"],
+  fi_px_sg: ["Renee", "紫苏", "林珏", "宸希", "团结", "姜维", "东东", "云舒", "朵拉", "子衿", "南星", "安澜"],
+  oc_pd_ux: ["小雅", "庄周", "方遒", "文静", "燕青", "代代", "晴天", "舒言", "奕森", "高乐", "木槿", "元芳"],
+  fc_hr_ad: ["鲁班", "佩兰", "摩卡", "轩辕", "苏木", "莉娜", "可妮", "松月", "紫竹", "悠米", "子叶"],
+};
+
 const GROUP_RULES = [
   {
     key: "leader",
@@ -1045,6 +1054,8 @@ function isSupervisorForRule(user, rule) {
 }
 
 function groupMembers(topics, scoreGroupKey) {
+  const configuredMembers = SCORE_GROUP_MEMBERS[scoreGroupKey] || [];
+  if (configuredMembers.length) return configuredMembers;
   return topics.filter((topic) => topic.scoreGroupKey === scoreGroupKey).map((topic) => topic.leader || topic.owner);
 }
 
