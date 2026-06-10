@@ -132,7 +132,7 @@ async function handleAuthCallback() {
     window.location.replace("/");
     return;
   }
-  if (!stateValue || stateValue !== expectedState) {
+  if (!stateValue || (expectedState && stateValue !== expectedState)) {
     app.innerHTML = `<div class="loading">飞书登录失败：state 校验失败，请重新打开应用。</div>`;
     return;
   }
