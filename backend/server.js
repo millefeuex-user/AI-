@@ -506,12 +506,36 @@ function pickField(fields, names) {
   return "";
 }
 
+function firstFilledField(fields) {
+  for (const [name, value] of Object.entries(fields || {})) {
+    const text = extractText(value);
+    if (text) return { name, value: text };
+  }
+  return { name: "", value: "" };
+}
+
+function normalizeRecordFields(fields) {
+  return Object.entries(fields || {})
+    .map(([name, value]) => ({ name, value: extractText(value) }))
+    .filter((field) => field.name && field.value);
+}
+
 function normalizePersonToken(value) {
   return extractText(value)
     .replaceAll("@", "")
     .replace(/[（(].*?[）)]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function primaryPersonToken(value) {
+  const raw = normalizePersonToken(value);
+  if (!raw) return "";
+  const [first] = raw
+    .split(/[、,，/／;；\n]+/)
+    .map(normalizePersonToken)
+    .filter(Boolean);
+  return first || raw;
 }
 
 function comparablePersonToken(value) {
@@ -555,7 +579,12 @@ function gradeOf(score) {
 
 function normalizeSourceTopic(record, rule, index) {
   const fields = record.fields || {};
-  const owner = pickField(fields, ["负责人", "项目负责人", "团队负责人", "花名", "提出人", "提交人", "提交人/团队"]);
+  const firstField = firstFilledField(fields);
+  const namedOwner = pickField(fields, ["负责人", "项目负责人", "团队负责人", "花名", "提出人", "提交人", "提交人/团队"]);
+  const isTeamLikeTopic = rule.type === "leader" || rule.type === "team";
+  const ownerSource = rule.type === "leader" || rule.type === "team" ? firstField.value || namedOwner : namedOwner || firstField.value;
+  const leader = isTeamLikeTopic ? primaryPersonToken(ownerSource) : "";
+  const owner = isTeamLikeTopic ? leader || ownerSource : ownerSource;
   const title = pickField(fields, ["课题名称", "主题", "项目名称", "AI课题名称"]);
   const department = pickField(fields, ["所在部门", "所在部门（多选）", "部门", "所属部门"]);
   const painPoint = pickField(fields, [
@@ -575,6 +604,7 @@ function normalizeSourceTopic(record, rule, index) {
   const materialUrl = pickField(fields, ["交付物链接", "成果介绍（按照模板要求提交）", "材料链接", "产品链接", "Demo链接"]);
   const productUrl = pickField(fields, ["产品预览链接", "产品链接", "Demo链接", "演示链接"]) || materialUrl;
   const remark = pickField(fields, ["备注", "说明"]);
+  const detailFields = normalizeRecordFields(fields);
   if (!owner || !title) return null;
   return {
     id: `${rule.key}:${record.record_id || index}`,
@@ -587,6 +617,9 @@ function normalizeSourceTopic(record, rule, index) {
     title,
     type: rule.type === "normal" ? "普通个人组" : rule.type === "team" ? "团队课题" : "Leader组",
     owner,
+    ownerRaw: ownerSource,
+    leader,
+    leaderField: firstField.name,
     department,
     level: rule.name,
     materialUrl,
@@ -595,6 +628,7 @@ function normalizeSourceTopic(record, rule, index) {
     expectedResult,
     delivery,
     remark,
+    detailFields,
   };
 }
 
@@ -778,7 +812,7 @@ function isSupervisorForRule(user, rule) {
 }
 
 function groupMembers(topics, groupKey) {
-  return topics.filter((topic) => topic.groupKey === groupKey).map((topic) => topic.owner);
+  return topics.filter((topic) => topic.groupKey === groupKey).map((topic) => topic.leader || topic.owner);
 }
 
 function reviewIdentityFor(reviewType) {
@@ -817,7 +851,7 @@ function buildAssignmentsForUser(user, topics, scores) {
     if (!rule) continue;
     const members = groupMembers(topics, topic.groupKey);
     const isGroupMember = members.some((member) => personMatches(user.name, member));
-    const isOwner = personMatches(user.name, topic.owner);
+    const isOwner = personMatches(user.name, topic.leader || topic.owner);
 
     if ((rule.type === "leader" || rule.type === "team" || rule.type === "normal") && isGroupMember && !isOwner) {
       add(topic, REVIEW_TYPE.PEER);

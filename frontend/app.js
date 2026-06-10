@@ -280,6 +280,7 @@ function topicCard(assignment) {
             <span class="pill">${escapeHtml(topic.type)}</span>
             <span class="pill blue">${escapeHtml(topic.level)}</span>
             <span class="pill">${escapeHtml(topic.department)}</span>
+            ${(topic.groupType === "leader" || topic.groupType === "team") && topic.leader ? `<span class="pill">组长：${escapeHtml(topic.leader)}</span>` : ""}
             ${assignment.score ? `<span class="pill ${grade.className}">${escapeHtml(grade.label)} · ${assignment.score.total}分</span>` : `<span class="pill amber">待评分</span>`}
           </div>
         </div>
@@ -320,6 +321,7 @@ function scoreView(assignmentId) {
   state.form.reviewerIdentity = state.form.reviewerIdentity || assignment.reviewerIdentity;
   const total = totalOf(state.form);
   const grade = gradeOf(total);
+  const isTeamLike = topic.groupType === "leader" || topic.groupType === "team";
   return `
     <section class="topbar">
       <div>
@@ -336,17 +338,25 @@ function scoreView(assignmentId) {
           <span class="pill ${assignment.score ? "green" : "amber"}">${assignment.score ? "已评分" : "待提交"}</span>
         </div>
         <div class="panel-body">
-          <div class="detail-list">
-            ${detail("提交人/团队", topic.owner)}
+          <div class="subject-card">
+            <div>
+              <div class="label">${isTeamLike ? "评分主体" : "提交人/团队"}</div>
+              <div class="subject-name">${escapeHtml(isTeamLike ? topic.leader || topic.owner : topic.owner)}</div>
+            </div>
+            <span class="pill teal">${escapeHtml(assignment.reviewType)}</span>
+          </div>
+          <div class="detail-list compact">
+            ${detail(isTeamLike ? "组长字段" : "负责人字段", topic.leaderField || "负责人/花名")}
+            ${isTeamLike && topic.ownerRaw && topic.ownerRaw !== topic.leader ? detail("原始成员/负责人", topic.ownerRaw) : ""}
             ${detail("所属部门", topic.department)}
             ${detail("课题类型", topic.type)}
             ${detail("申请等级", topic.level)}
-            ${detail("评分类型", assignment.reviewType)}
           </div>
           <div class="link-list" style="margin-top: 18px;">
             ${link("交付材料", topic.materialUrl)}
             ${link("产品预览", topic.productUrl)}
           </div>
+          ${recordFieldsView(topic)}
         </div>
       </aside>
       <section class="panel">
@@ -376,11 +386,32 @@ function scoreView(assignmentId) {
 }
 
 function detail(label, value) {
+  if (value == null || value === "") return "";
   return `<div class="detail-row"><div class="label">${escapeHtml(label)}</div><div class="detail-value">${escapeHtml(value)}</div></div>`;
 }
 
 function link(label, url) {
-  return `<div class="link-item"><div><div class="label">${escapeHtml(label)}</div><div class="detail-value">${escapeHtml(url || "未配置")}</div></div><a class="button secondary" href="${escapeHtml(url || "#")}" target="_blank" rel="noreferrer">打开</a></div>`;
+  if (!url) return "";
+  return `<div class="link-item"><div><div class="label">${escapeHtml(label)}</div><div class="detail-value">${escapeHtml(url)}</div></div><a class="button secondary" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">打开</a></div>`;
+}
+
+function recordFieldsView(topic) {
+  const fields = Array.isArray(topic.detailFields) ? topic.detailFields : [];
+  if (!fields.length) return "";
+  return `
+    <section class="record-fields">
+      <div class="record-fields-head">
+        <div>
+          <div class="panel-title small">原表完整信息</div>
+          <div class="record-fields-sub">根据当前项目所在子表自动展示全部字段</div>
+        </div>
+        <span class="pill">${fields.length}项</span>
+      </div>
+      <div class="record-field-grid">
+        ${fields.map((field) => detail(field.name, field.value)).join("")}
+      </div>
+    </section>
+  `;
 }
 
 function textarea(field, label, placeholder) {

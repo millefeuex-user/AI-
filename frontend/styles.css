@@ -314,6 +314,10 @@ h1 {
   font-size: 18px;
 }
 
+.panel-title.small {
+  font-size: 15px;
+}
+
 .panel-body {
   padding: 20px;
 }
@@ -471,6 +475,34 @@ h1 {
   gap: 12px;
 }
 
+.detail-list.compact {
+  margin-top: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+.subject-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  background:
+    linear-gradient(135deg, rgba(255, 10, 120, 0.08), transparent 44%),
+    #fff;
+}
+
+.subject-name {
+  color: var(--heading);
+  font-size: 24px;
+  line-height: 1.22;
+  margin-top: 6px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
 .detail-row {
   display: grid;
   gap: 5px;
@@ -487,6 +519,54 @@ label {
   color: #2b4d5b;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
+.record-fields {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.76);
+  overflow: hidden;
+}
+
+.record-fields-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  background: linear-gradient(90deg, #fff9fc, #f8edf3);
+}
+
+.record-fields-sub {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.record-field-grid {
+  max-height: 560px;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+}
+
+.record-field-grid .detail-row {
+  padding: 13px 14px;
+  border-bottom: 1px solid rgba(234, 216, 226, 0.74);
+}
+
+.record-field-grid .detail-row:nth-child(odd) {
+  border-right: 1px solid rgba(234, 216, 226, 0.74);
+}
+
+.record-field-grid .detail-value {
+  font-size: 13px;
+  max-height: 7.8em;
+  overflow: auto;
 }
 
 .link-item,
@@ -715,8 +795,13 @@ th {
 
   .content-grid,
   .score-layout,
-  .metrics {
+  .metrics,
+  .record-field-grid {
     grid-template-columns: 1fr;
+  }
+
+  .record-field-grid .detail-row:nth-child(odd) {
+    border-right: 0;
   }
 
   .metrics {
@@ -748,8 +833,14 @@ th {
   }
 
   .topic-head,
-  .link-item {
+  .link-item,
+  .subject-card,
+  .record-fields-head {
     flex-direction: column;
+  }
+
+  .detail-list.compact {
+    grid-template-columns: 1fr;
   }
 
   .actions,
