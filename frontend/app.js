@@ -347,17 +347,10 @@ function scoreView(assignmentId) {
           </div>
           <div class="detail-list compact">
             ${detail(isTeamLike ? "组长字段" : "负责人字段", topic.leaderField || "负责人/花名")}
-            ${isTeamLike && topic.ownerRaw && topic.ownerRaw !== topic.leader ? detail("原始成员/负责人", topic.ownerRaw) : ""}
             ${detail("所属部门", topic.department)}
             ${detail("课题类型", topic.type)}
             ${detail("申请等级", topic.level)}
           </div>
-          <div class="link-list" style="margin-top: 18px;">
-            ${link("交付材料", topic.materialUrl)}
-            ${link("产品预览", topic.productUrl)}
-          </div>
-          ${topic.delivery ? `<div class="field-row" style="margin-top: 18px;"><label>交付物成果</label><div class="detail-value" style="white-space: pre-wrap; line-height: 1.7;">${escapeHtml(topic.delivery)}</div></div>` : ""}
-          ${recordFieldsView(topic)}
         </div>
       </aside>
       <section class="panel">

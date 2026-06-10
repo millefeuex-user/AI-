@@ -1144,10 +1144,27 @@ function scoreRemark(score) {
 
 function scoreToBitableFields(score) {
   return {
+    [config.fields.resultId]: score.id,
+    [config.fields.resultAssignmentId]: score.assignmentId,
+    [config.fields.resultTopicId]: score.topicId,
+    [config.fields.resultReviewerId]: score.reviewerId,
     [config.fields.resultReviewerName]: score.reviewerName,
+    [config.fields.resultReviewerIdentity]: score.reviewerIdentity,
+    [config.fields.resultTopicGroup]: score.topicGroup,
+    [config.fields.resultReviewType]: score.reviewType,
+    [config.fields.resultProblemValue]: score.problemValue,
+    [config.fields.resultUsageDepth]: score.usageDepth,
+    [config.fields.resultDeliveryQuality]: score.deliveryQuality,
+    [config.fields.resultReuseAsset]: score.reuseAsset,
+    [config.fields.resultTotal]: score.total,
     [config.fields.resultProjectScore]: score.total,
     [config.fields.resultGrade]: score.grade,
-    [config.fields.resultComment]: scoreRemark(score),
+    [config.fields.resultComment]: score.comment,
+    [config.fields.resultHighlights]: score.highlights,
+    [config.fields.resultSuggestions]: score.suggestions,
+    [config.fields.resultRecommendCase]: score.recommendCase ? "是" : "否",
+    [config.fields.resultSubmittedAt]: score.submittedAt,
+    评分明细: scoreRemark(score),
   };
 }
 
@@ -1166,7 +1183,13 @@ async function saveScore(score, user) {
   }
 
   const existingScores = await getScores(user);
-  const existing = existingScores.find((item) => personMatches(item.reviewerName, score.reviewerName));
+  const existing = existingScores.find(
+    (item) =>
+      item.assignmentId === score.assignmentId ||
+      (item.topicId === score.topicId &&
+        item.reviewType === score.reviewType &&
+        (item.reviewerId === score.reviewerId || personMatches(item.reviewerName, score.reviewerName))),
+  );
   const nextScore = { ...score, id: existing?.id || score.id, recordId: existing?.recordId };
   await writeBitableRecord(
     config.feishu.resultTableId,
