@@ -187,12 +187,18 @@ const config = {
 };
 
 let cachedBitableAppToken = "";
+let cachedTenantAccessToken = "";
+let cachedTenantAccessTokenExpiresAt = 0;
 const fieldNameCache = new Map();
 const userAccessTokens = new Map();
 const sessions = new Map();
 const oauthStates = new Map();
 const SESSION_COOKIE = "ai_scoring_session";
 const OAUTH_STATE_COOKIE = "ai_scoring_oauth_state";
+const FEISHU_AUTH_MODE = {
+  USER: "user",
+  SERVICE: "service",
+};
 
 class AuthRequiredError extends Error {
   constructor(message = "Login required") {
@@ -462,6 +468,9 @@ async function feishuFetch(url, options = {}) {
 }
 
 async function getTenantAccessToken() {
+  if (cachedTenantAccessToken && Date.now() < cachedTenantAccessTokenExpiresAt) {
+    return cachedTenantAccessToken;
+  }
   const data = await feishuFetch("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -470,7 +479,10 @@ async function getTenantAccessToken() {
       app_secret: config.feishu.appSecret,
     }),
   });
-  return data.tenant_access_token;
+  cachedTenantAccessToken = data.tenant_access_token || "";
+  const expiresInMs = Math.max((Number(data.expire || data.expires_in || 0) - 60) * 1000, 60 * 1000);
+  cachedTenantAccessTokenExpiresAt = Date.now() + expiresInMs;
+  return cachedTenantAccessToken;
 }
 
 function userTokenKeys(user) {
@@ -490,7 +502,11 @@ function getUserAccessToken(user) {
   return "";
 }
 
-async function getAccessToken(user) {
+async function getAccessToken(user, authMode = FEISHU_AUTH_MODE.USER) {
+  if (authMode === FEISHU_AUTH_MODE.SERVICE) {
+    console.log("[feishu] 读表 token: tenant_access_token (service)");
+    return getTenantAccessToken();
+  }
   const userAccessToken = getUserAccessToken(user);
   if (userAccessToken) {
     console.log("[feishu] 读表 token: user_access_token");
@@ -504,12 +520,12 @@ async function getAccessToken(user) {
   return getTenantAccessToken();
 }
 
-async function getBitableAppToken(user) {
+async function getBitableAppToken(user, authMode = FEISHU_AUTH_MODE.USER) {
   if (config.feishu.appToken) return config.feishu.appToken;
   if (cachedBitableAppToken) return cachedBitableAppToken;
   if (!config.feishu.wikiToken) throw new Error("Missing FEISHU_APP_TOKEN or FEISHU_WIKI_TOKEN");
 
-  const accessToken = await getAccessToken(user);
+  const accessToken = await getAccessToken(user, authMode);
   const data = await feishuFetch(
     `https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node?token=${encodeURIComponent(config.feishu.wikiToken)}`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -744,6 +760,9 @@ function normalizeMockTopic(item, index) {
 
 function requireSourceConfig() {
   if (config.mockMode) return;
+  if (!config.feishu.appId || !config.feishu.appSecret) {
+    throw new Error("真实数据模式缺少 FEISHU_APP_ID 或 FEISHU_APP_SECRET，无法使用服务权限读取课题表。");
+  }
   if (!config.feishu.appToken && !config.feishu.wikiToken) {
     throw new Error("真实数据模式缺少 FEISHU_APP_TOKEN 或 FEISHU_WIKI_TOKEN，无法读取课题统计表。");
   }
@@ -770,9 +789,9 @@ function sourceTopicRejectReason(record, rule) {
   return "";
 }
 
-async function listBitableRecords(tableId, user, appTokenOverride = "") {
-  const accessToken = await getAccessToken(user);
-  const appToken = appTokenOverride || (await getBitableAppToken(user));
+async function listBitableRecords(tableId, user, appTokenOverride = "", authMode = FEISHU_AUTH_MODE.SERVICE) {
+  const accessToken = await getAccessToken(user, authMode);
+  const appToken = appTokenOverride || (await getBitableAppToken(user, authMode));
   const items = [];
   let pageToken = "";
   do {
@@ -785,10 +804,10 @@ async function listBitableRecords(tableId, user, appTokenOverride = "") {
   return items;
 }
 
-async function writeBitableRecord(tableId, recordId, fields, user, appTokenOverride = "") {
-  const accessToken = await getAccessToken(user);
-  const appToken = appTokenOverride || (await getBitableAppToken(user));
-  const filteredFields = await filterWritableFields(tableId, fields, user, appTokenOverride);
+async function writeBitableRecord(tableId, recordId, fields, user, appTokenOverride = "", authMode = FEISHU_AUTH_MODE.SERVICE) {
+  const accessToken = await getAccessToken(user, authMode);
+  const appToken = appTokenOverride || (await getBitableAppToken(user, authMode));
+  const filteredFields = await filterWritableFields(tableId, fields, user, appTokenOverride, authMode);
   if (!Object.keys(filteredFields).length) return null;
   const url = recordId
     ? `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}`
@@ -804,25 +823,25 @@ async function writeBitableRecord(tableId, recordId, fields, user, appTokenOverr
   return data.data?.record || data.data;
 }
 
-async function listBitableFields(tableId, user, appTokenOverride = "") {
-  const accessToken = await getAccessToken(user);
-  const appToken = appTokenOverride || (await getBitableAppToken(user));
+async function listBitableFields(tableId, user, appTokenOverride = "", authMode = FEISHU_AUTH_MODE.SERVICE) {
+  const accessToken = await getAccessToken(user, authMode);
+  const appToken = appTokenOverride || (await getBitableAppToken(user, authMode));
   const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/fields?page_size=200`;
   const data = await feishuFetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   return data.data?.items || [];
 }
 
-async function getFieldNames(tableId, user, appTokenOverride = "") {
-  const cacheKey = `${appTokenOverride || "default"}:${tableId}`;
+async function getFieldNames(tableId, user, appTokenOverride = "", authMode = FEISHU_AUTH_MODE.SERVICE) {
+  const cacheKey = `${authMode}:${appTokenOverride || "default"}:${tableId}`;
   if (fieldNameCache.has(cacheKey)) return fieldNameCache.get(cacheKey);
-  const fields = await listBitableFields(tableId, user, appTokenOverride);
+  const fields = await listBitableFields(tableId, user, appTokenOverride, authMode);
   const names = new Set(fields.map((field) => field.field_name).filter(Boolean));
   fieldNameCache.set(cacheKey, names);
   return names;
 }
 
-async function filterWritableFields(tableId, fields, user, appTokenOverride = "") {
-  const fieldNames = await getFieldNames(tableId, user, appTokenOverride);
+async function filterWritableFields(tableId, fields, user, appTokenOverride = "", authMode = FEISHU_AUTH_MODE.SERVICE) {
+  const fieldNames = await getFieldNames(tableId, user, appTokenOverride, authMode);
   return Object.fromEntries(Object.entries(fields).filter(([name]) => fieldNames.has(name)));
 }
 
