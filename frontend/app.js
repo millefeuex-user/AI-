@@ -177,6 +177,20 @@ function totalOf(form) {
   return rubric.reduce((sum, item) => sum + Number(form[item.key] || 0), 0);
 }
 
+function updateScoreSummaryDisplay() {
+  const total = totalOf(state.form);
+  const grade = gradeOf(total);
+  const totalNode = document.querySelector(".total-score");
+  const captionNode = document.querySelector(".total-caption");
+  const gradeNode = document.querySelector("[data-score-grade]");
+  if (totalNode) totalNode.textContent = String(total);
+  if (captionNode) captionNode.textContent = `当前总分 · ${grade.label}`;
+  if (gradeNode) {
+    gradeNode.className = `pill ${grade.className}`;
+    gradeNode.textContent = grade.label;
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -363,7 +377,7 @@ function scoreView(assignmentId) {
         </div>
       </aside>
       <section class="panel">
-        <div class="panel-header"><div class="panel-title">评分表</div><span class="pill ${grade.className}">${escapeHtml(grade.label)}</span></div>
+        <div class="panel-header"><div class="panel-title">评分表</div><span class="pill ${grade.className}" data-score-grade>${escapeHtml(grade.label)}</span></div>
         <div class="panel-body">
           <form class="score-form" data-action="submit-score">
             ${rubric.map((item) => dimension(item, state.form[item.key])).join("")}
@@ -604,10 +618,11 @@ document.addEventListener("input", (event) => {
   if (target.type === "number") {
     const dimension = rubric.find((item) => item.key === field);
     state.form[field] = Math.max(0, Math.min(Number(target.value || 0), dimension.max));
+    if (String(state.form[field]) !== target.value && target.value !== "") target.value = state.form[field];
+    updateScoreSummaryDisplay();
   } else {
     state.form[field] = target.value;
   }
-  render();
 });
 
 document.addEventListener("change", (event) => {

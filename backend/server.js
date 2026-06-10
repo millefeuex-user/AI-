@@ -1266,14 +1266,17 @@ async function saveScore(score, user) {
         (item.reviewerId === score.reviewerId || personMatches(item.reviewerName, score.reviewerName))),
   );
   const nextScore = { ...score, id: existing?.id || score.id, recordId: existing?.recordId };
-  await writeBitableRecord(
+  const writtenRecord = await writeBitableRecord(
     config.feishu.resultTableId,
     nextScore.recordId,
     scoreToBitableFields(nextScore),
     user,
     config.feishu.resultAppToken,
   );
-  return nextScore;
+  return {
+    ...nextScore,
+    recordId: nextScore.recordId || writtenRecord?.record_id || writtenRecord?.recordId || writtenRecord?.id,
+  };
 }
 
 function assignmentIdFor(topic, reviewerKey, reviewType) {
@@ -1359,17 +1362,24 @@ function requiredCounts(topic, topics) {
 function summarizeTopic(topic, topics, scores) {
   const rule = ruleFor(topic.groupKey);
   const topicScores = scores.filter((score) => score.topicId === topic.id);
-  const peerAverage = average(topicScores.filter((score) => score.reviewType === REVIEW_TYPE.PEER));
-  const supervisorAverage = average(topicScores.filter((score) => score.reviewType === REVIEW_TYPE.SUPERVISOR));
+  const peerScores = topicScores.filter((score) => score.reviewType === REVIEW_TYPE.PEER);
+  const supervisorScores = topicScores.filter((score) => score.reviewType === REVIEW_TYPE.SUPERVISOR);
+  const peerAverage = average(peerScores);
+  const supervisorAverage = average(supervisorScores);
+  const counts = requiredCounts(topic, topics);
+  const isComplete = peerScores.length >= counts.peer && supervisorScores.length >= counts.supervisor;
   let finalScore = null;
-  if (peerAverage != null && supervisorAverage != null) {
+  if (isComplete && peerAverage != null && supervisorAverage != null) {
     finalScore = Math.round((peerAverage * rule.weights.peer + supervisorAverage * rule.weights.supervisor) * 10) / 10;
   }
-  const counts = requiredCounts(topic, topics);
   return {
     topic,
     requiredCount: counts.total,
     scoredCount: topicScores.length,
+    peerRequiredCount: counts.peer,
+    peerScoredCount: peerScores.length,
+    supervisorRequiredCount: counts.supervisor,
+    supervisorScoredCount: supervisorScores.length,
     peerAverage,
     supervisorAverage,
     average: finalScore,
@@ -1430,6 +1440,21 @@ async function writeBackTopicSummary(topic, summary, user) {
   if (config.mockMode || (!config.feishu.appToken && !config.feishu.wikiToken)) return;
   if (!topic.sourceTableId || !topic.recordId) return;
   await writeBitableRecord(topic.sourceTableId, topic.recordId, topicWritebackFields(summary), user);
+}
+
+async function writeBackResultSummary(summary, user) {
+  if (
+    config.mockMode ||
+    !config.feishu.resultTableId ||
+    (!config.feishu.appToken && !config.feishu.wikiToken && !config.feishu.resultAppToken)
+  ) {
+    return;
+  }
+  const fields = topicWritebackFields(summary);
+  for (const score of summary.scores || []) {
+    if (!score.recordId) continue;
+    await writeBitableRecord(config.feishu.resultTableId, score.recordId, fields, user, config.feishu.resultAppToken);
+  }
 }
 
 async function routeApi(req, res, pathname) {
@@ -1570,6 +1595,7 @@ async function routeApi(req, res, pathname) {
       const nextScores = upsertScore(scores, savedScore);
       const summary = summarizeTopic(topic, topics, nextScores);
       await writeBackTopicSummary(topic, summary, user);
+      await writeBackResultSummary(summary, user);
     }
     return json(res, 200, { score: savedScore });
   }
